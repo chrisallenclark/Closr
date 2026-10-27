@@ -62,5 +62,5 @@ export function OutfitBoard({ pieces, width, gap = 6, radius = 12 }: OutfitBoard
 const styles = StyleSheet.create({
   grid: { flexDirection: 'row', flexWrap: 'wrap' },
   row: { flexDirection: 'row' },
-  side: { justifyContent: 'center', alignItems: 'center' },
+  side: { justifyContent: 'space-between', alignItems: 'center' },
 });

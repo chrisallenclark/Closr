@@ -5,6 +5,8 @@ import { motion } from '@/theme';
 
 import { haptic } from './haptics';
 
+const AnimatedPressable = Animated.createAnimatedComponent(Pressable);
+
 export interface PressableScaleProps extends Omit<PressableProps, 'style'> {
   style?: StyleProp<ViewStyle>;
   scale?: number;
@@ -19,7 +21,6 @@ export function PressableScale({
   onPressIn,
   onPressOut,
   onPress,
-  children,
   disabled,
   ...rest
 }: PressableScaleProps) {
@@ -27,9 +28,10 @@ export function PressableScale({
   const animated = useAnimatedStyle(() => ({ transform: [{ scale: s.value }] }));
 
   return (
-    <Pressable
+    <AnimatedPressable
       {...rest}
       disabled={disabled}
+      style={[style, animated, disabled ? { opacity: 0.45 } : null]}
       onPressIn={(e) => {
         s.set(withSpring(scale, motion.spring));
         onPressIn?.(e);
@@ -42,12 +44,6 @@ export function PressableScale({
         if (hapticFeedback !== 'none') haptic[hapticFeedback]();
         onPress?.(e);
       }}
-    >
-      {(state) => (
-        <Animated.View style={[style, animated, disabled ? { opacity: 0.45 } : null]}>
-          {typeof children === 'function' ? children(state) : children}
-        </Animated.View>
-      )}
-    </Pressable>
+    />
   );
 }

@@ -65,6 +65,7 @@ export default function Match() {
     const verdict = VERDICTS[result.verdict];
     return (
       <Screen
+        key="result"
         edges={{ top: false }}
         header={<Header title="Will It Match?" leading="close" />}
         footer={

@@ -18,11 +18,11 @@ export interface OutfitStackProps {
  */
 export function OutfitStack({ pieces, width, height }: OutfitStackProps) {
   const by = (slot: Slot) => pieces.find((p) => p.slot === slot);
-  const unit = Math.min(width, height / 1.72);
-  const main = unit * 0.7;
-  const shoe = unit * 0.44;
-  const side = unit * 0.36;
-
+  // Size the main pieces to fill the panel, then centre the whole composition vertically.
+  const main = Math.min(width * 0.84, height / 2.45);
+  const shoe = main * 0.6;
+  const side = main * 0.5;
+  const span = main * 0.86 + main * 0.84 + shoe;
   const top = by('top');
   const bottom = by('bottom');
   const shoes = by('shoes');
@@ -37,17 +37,17 @@ export function OutfitStack({ pieces, width, height }: OutfitStackProps) {
     ) : null;
 
   const mainLeft = (width - main) / 2;
-  const topY = height * 0.03;
+  const topY = Math.max(0, (height - span) / 2);
   const bottomY = topY + main * 0.86;
-  const shoesY = Math.min(bottomY + main * 0.84, height - shoe);
+  const shoesY = bottomY + main * 0.84;
 
   return (
     <View style={{ width, height }}>
-      {tile(outer, side, { position: 'absolute', left: 0, top: topY + main * 0.42, zIndex: 0 })}
-      {tile(accessory, side * 0.85, { position: 'absolute', right: 0, top: topY + main * 0.55, zIndex: 0 })}
+      {tile(outer, side, { position: 'absolute', left: 0, top: topY + main * 0.5, zIndex: 0 })}
+      {tile(accessory, side * 0.8, { position: 'absolute', right: 0, top: bottomY + main * 0.2, zIndex: 0 })}
       {tile(bottom, main, { position: 'absolute', left: mainLeft, top: bottomY, zIndex: 1 })}
       {tile(top, main, { position: 'absolute', left: mainLeft, top: topY, zIndex: 2 })}
-      {tile(shoes, shoe, { position: 'absolute', left: (width - shoe) / 2 + main * 0.18, top: shoesY, zIndex: 3 })}
+      {tile(shoes, shoe, { position: 'absolute', left: (width - shoe) / 2 + main * 0.12, top: shoesY, zIndex: 3 })}
     </View>
   );
 }

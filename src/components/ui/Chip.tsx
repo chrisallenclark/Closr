@@ -16,20 +16,14 @@ export interface ChipProps {
 
 export function Chip({ label, selected, onPress, swatch, size = 'md', tone = 'default' }: ChipProps) {
   const onCream = tone === 'onCream';
-  return (
-    <PressableScale
-      onPress={onPress}
-      disabled={!onPress}
-      hapticFeedback="select"
-      accessibilityRole="button"
-      accessibilityState={{ selected }}
-      style={[
-        styles.chip,
-        size === 'sm' && styles.sm,
-        onCream && styles.onCream,
-        selected && styles.selected,
-      ]}
-    >
+  const style = [
+    styles.chip,
+    size === 'sm' && styles.sm,
+    onCream && styles.onCream,
+    selected && styles.selected,
+  ];
+  const content = (
+    <>
       {swatch ? <View style={[styles.swatch, { backgroundColor: swatch }]} /> : null}
       <Text
         variant={size === 'sm' ? 'micro' : 'label'}
@@ -37,6 +31,18 @@ export function Chip({ label, selected, onPress, swatch, size = 'md', tone = 'de
       >
         {label}
       </Text>
+    </>
+  );
+  if (!onPress) return <View style={style}>{content}</View>;
+  return (
+    <PressableScale
+      onPress={onPress}
+      hapticFeedback="select"
+      accessibilityRole="button"
+      accessibilityState={{ selected }}
+      style={style}
+    >
+      {content}
     </PressableScale>
   );
 }
