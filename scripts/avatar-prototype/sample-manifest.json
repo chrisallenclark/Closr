@@ -1,0 +1,22 @@
+{
+  "items": [
+    { "id": "khaki-tee", "photo": "khaki-tee.jpg", "category": "top", "subcategory": "basic-tee", "fit": "Regular" },
+    { "id": "rust-tee", "photo": "rust-tee.jpg", "category": "top", "subcategory": "basic-tee", "fit": "Relaxed" },
+    { "id": "white-tee", "photo": "white-tee.jpg", "category": "top", "subcategory": "graphic-tee", "fit": "Oversized" },
+    { "id": "black-tee", "photo": "black-tee.jpg", "category": "top", "subcategory": "basic-tee", "fit": "Slim" },
+    { "id": "brown-pants", "photo": "brown-pants.jpg", "category": "bottom", "subcategory": "trousers", "fit": "Regular" },
+    { "id": "jeans", "photo": "jeans.jpg", "category": "bottom", "subcategory": "jeans", "fit": "Relaxed" },
+    { "id": "charcoal-trousers", "photo": "charcoal-trousers.jpg", "category": "bottom", "subcategory": "trousers", "fit": "Slim" },
+    { "id": "trail-sneakers", "photo": "trail-sneakers.jpg", "category": "shoes", "subcategory": "sneakers" },
+    { "id": "white-sneakers", "photo": "white-sneakers.jpg", "category": "shoes", "subcategory": "sneakers" },
+    { "id": "loafers", "photo": "loafers.jpg", "category": "shoes", "subcategory": "loafers" },
+    { "id": "olive-overshirt", "photo": "olive-overshirt.jpg", "category": "outerwear", "subcategory": "overshirt", "fit": "Relaxed" },
+    { "id": "leather-jacket", "photo": "leather-jacket.jpg", "category": "outerwear", "subcategory": "leather-jacket", "fit": "Regular" }
+  ],
+  "outfits": [
+    { "id": "earth", "name": "Earth Tones", "items": ["khaki-tee", "brown-pants", "trail-sneakers", "olive-overshirt"] },
+    { "id": "coffee", "name": "Sunday Coffee", "items": ["white-tee", "jeans", "white-sneakers"] },
+    { "id": "dinner", "name": "Dinner Downtown", "items": ["black-tee", "charcoal-trousers", "loafers", "leather-jacket"] },
+    { "id": "rust", "name": "Rust & Denim", "items": ["rust-tee", "jeans", "trail-sneakers"] }
+  ]
+}

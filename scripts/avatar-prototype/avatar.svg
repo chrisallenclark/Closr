@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="2000" viewBox="0 0 1000 2000">
+  <defs>
+    <linearGradient id="form" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#3a2f27"/>
+      <stop offset="0.45" stop-color="#5a4a3e"/>
+      <stop offset="1" stop-color="#2e251f"/>
+    </linearGradient>
+    <linearGradient id="cap" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#1e1814"/>
+      <stop offset="0.5" stop-color="#4a3c31"/>
+      <stop offset="1" stop-color="#1e1814"/>
+    </linearGradient>
+    <radialGradient id="floor" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0" stop-color="#000" stop-opacity="0.45"/>
+      <stop offset="1" stop-color="#000" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+  <!-- floor shadow -->
+  <ellipse cx="500" cy="1965" rx="260" ry="26" fill="url(#floor)"/>
+  <!-- neck cap + neck (dress-form style, headless like the mockup) -->
+  <ellipse cx="500" cy="168" rx="58" ry="16" fill="url(#cap)"/>
+  <path d="M446 170 L446 300 Q500 318 554 300 L554 170 Z" fill="url(#form)"/>
+  <!-- torso -->
+  <path d="M446 290 Q360 300 330 340 Q300 380 318 520 Q332 640 360 720 Q372 790 362 860
+           L638 860 Q628 790 640 720 Q668 640 682 520 Q700 380 670 340 Q640 300 554 290 Z" fill="url(#form)"/>
+  <!-- legs -->
+  <path d="M362 860 Q356 1200 382 1520 Q392 1720 404 1930 L470 1930 Q478 1700 488 1400 L500 1000
+           L512 1400 Q522 1700 530 1930 L596 1930 Q608 1720 618 1520 Q644 1200 638 860 Z" fill="url(#form)" opacity="0.92"/>
+</svg>
