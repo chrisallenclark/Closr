@@ -1,10 +1,18 @@
-import type { Category, ColorId, Formality, Season } from './types';
+import type { Category, ColorId, Formality, ItemFit, Season } from './types';
+
+export interface SubcategoryDef {
+  id: string;
+  label: string;
+  formality: Formality;
+  /** Fit implied by the type itself (e.g. Baggy Tee), pre-selected in the form. */
+  fit?: ItemFit;
+}
 
 export interface CategoryDef {
   id: Category;
   label: string;
   plural: string;
-  subcategories: { id: string; label: string; formality: Formality }[];
+  subcategories: SubcategoryDef[];
 }
 
 export const CATEGORIES: CategoryDef[] = [
@@ -15,13 +23,25 @@ export const CATEGORIES: CategoryDef[] = [
     subcategories: [
       { id: 'graphic-tee', label: 'Graphic Tee', formality: 1 },
       { id: 'basic-tee', label: 'Basic Tee', formality: 2 },
+      { id: 'baggy-tee', label: 'Baggy Tee', formality: 1, fit: 'Oversized' },
+      { id: 'cutoff-tee', label: 'Cutoff Tee', formality: 1 },
+      { id: 'crop-top', label: 'Crop Top', formality: 2 },
+      { id: 'tank', label: 'Tank', formality: 1 },
+      { id: 'long-sleeve', label: 'Long Sleeve', formality: 2 },
+      { id: 'henley', label: 'Henley', formality: 2 },
       { id: 'polo', label: 'Polo', formality: 3 },
       { id: 'button-up', label: 'Button Up', formality: 3 },
+      { id: 'flannel', label: 'Flannel', formality: 2 },
       { id: 'dress-shirt', label: 'Dress Shirt', formality: 4 },
+      { id: 'blouse', label: 'Blouse', formality: 3 },
       { id: 'sweater', label: 'Sweater', formality: 3 },
+      { id: 'cardigan', label: 'Cardigan', formality: 3 },
       { id: 'hoodie', label: 'Hoodie', formality: 1 },
       { id: 'sweatshirt', label: 'Sweatshirt', formality: 1 },
-      { id: 'tank', label: 'Tank', formality: 1 },
+      { id: 'jersey', label: 'Jersey', formality: 1 },
+      { id: 'corset', label: 'Corset', formality: 3 },
+      { id: 'bodysuit', label: 'Bodysuit', formality: 2 },
+      { id: 'bikini-top', label: 'Bikini Top', formality: 1 },
     ],
   },
   {
@@ -30,11 +50,33 @@ export const CATEGORIES: CategoryDef[] = [
     plural: 'Bottoms',
     subcategories: [
       { id: 'jeans', label: 'Jeans', formality: 2 },
+      { id: 'baggy-jeans', label: 'Baggy Jeans', formality: 2, fit: 'Oversized' },
       { id: 'cargo', label: 'Cargo Pants', formality: 2 },
+      { id: 'carpenter', label: 'Carpenter Pants', formality: 2 },
       { id: 'chinos', label: 'Chinos', formality: 3 },
       { id: 'trousers', label: 'Trousers', formality: 4 },
       { id: 'joggers', label: 'Joggers', formality: 1 },
+      { id: 'sweatpants', label: 'Sweatpants', formality: 1 },
       { id: 'shorts', label: 'Shorts', formality: 1 },
+      { id: 'cutoff-shorts', label: 'Cutoff Shorts', formality: 1 },
+      { id: 'jorts', label: 'Jorts', formality: 1 },
+      { id: 'skirt', label: 'Skirt', formality: 3 },
+      { id: 'leggings', label: 'Leggings', formality: 1 },
+      { id: 'swim-trunks', label: 'Swim Trunks', formality: 1 },
+      { id: 'bikini-bottom', label: 'Bikini Bottom', formality: 1 },
+    ],
+  },
+  {
+    id: 'onepiece',
+    label: 'One-Piece',
+    plural: 'One-Pieces',
+    subcategories: [
+      { id: 'dress', label: 'Dress', formality: 3 },
+      { id: 'jumpsuit', label: 'Jumpsuit', formality: 3 },
+      { id: 'romper', label: 'Romper', formality: 2 },
+      { id: 'overalls', label: 'Overalls', formality: 2 },
+      { id: 'swimsuit', label: 'Swimsuit', formality: 1 },
+      { id: 'tracksuit', label: 'Tracksuit', formality: 1 },
     ],
   },
   {
@@ -47,9 +89,14 @@ export const CATEGORIES: CategoryDef[] = [
       { id: 'denim-jacket', label: 'Denim Jacket', formality: 2 },
       { id: 'leather-jacket', label: 'Leather Jacket', formality: 3 },
       { id: 'bomber', label: 'Bomber', formality: 2 },
-      { id: 'coat', label: 'Coat', formality: 4 },
-      { id: 'blazer', label: 'Blazer', formality: 4 },
+      { id: 'varsity', label: 'Varsity Jacket', formality: 2 },
+      { id: 'windbreaker', label: 'Windbreaker', formality: 1 },
+      { id: 'fleece', label: 'Fleece', formality: 1 },
+      { id: 'vest', label: 'Vest', formality: 2 },
       { id: 'puffer', label: 'Puffer', formality: 2 },
+      { id: 'coat', label: 'Coat', formality: 4 },
+      { id: 'trench', label: 'Trench Coat', formality: 4 },
+      { id: 'blazer', label: 'Blazer', formality: 4 },
     ],
   },
   {
@@ -58,10 +105,16 @@ export const CATEGORIES: CategoryDef[] = [
     plural: 'Shoes',
     subcategories: [
       { id: 'sneakers', label: 'Sneakers', formality: 2 },
+      { id: 'running', label: 'Running Shoes', formality: 1 },
+      { id: 'skate', label: 'Skate Shoes', formality: 1 },
       { id: 'boots', label: 'Boots', formality: 3 },
+      { id: 'cowboy-boots', label: 'Cowboy Boots', formality: 3 },
       { id: 'loafers', label: 'Loafers', formality: 4 },
       { id: 'dress-shoes', label: 'Dress Shoes', formality: 5 },
+      { id: 'heels', label: 'Heels', formality: 4 },
+      { id: 'flats', label: 'Flats', formality: 3 },
       { id: 'sandals', label: 'Sandals', formality: 1 },
+      { id: 'slides', label: 'Slides', formality: 1 },
     ],
   },
   {
@@ -70,9 +123,11 @@ export const CATEGORIES: CategoryDef[] = [
     plural: 'Accessories',
     subcategories: [
       { id: 'hat', label: 'Hat', formality: 2 },
+      { id: 'beanie', label: 'Beanie', formality: 1 },
       { id: 'belt', label: 'Belt', formality: 3 },
       { id: 'watch', label: 'Watch', formality: 3 },
       { id: 'jewelry', label: 'Jewelry', formality: 3 },
+      { id: 'chain', label: 'Chain', formality: 2 },
       { id: 'sunglasses', label: 'Sunglasses', formality: 2 },
       { id: 'bag', label: 'Bag', formality: 3 },
       { id: 'scarf', label: 'Bandana / Scarf', formality: 2 },
@@ -155,6 +210,17 @@ export const SEASONS: { id: Season; label: string }[] = [
   { id: 'fall', label: 'Fall' },
   { id: 'winter', label: 'Winter' },
 ];
+
+export const ITEM_FITS: ItemFit[] = ['Slim', 'Fitted', 'Regular', 'Relaxed', 'Oversized'];
+
+/** Categories where fit is meaningful (not shoes or accessories). */
+export function hasFit(category: Category): boolean {
+  return category !== 'shoes' && category !== 'accessory';
+}
+
+export function defaultFit(category: Category, sub: string): ItemFit | undefined {
+  return getCategory(category).subcategories.find((s) => s.id === sub)?.fit;
+}
 
 export const FORMALITY_LABELS: Record<Formality, string> = {
   1: 'Lounge',

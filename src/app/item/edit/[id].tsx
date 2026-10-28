@@ -1,4 +1,3 @@
-import { Image } from 'expo-image';
 import { router, useLocalSearchParams } from 'expo-router';
 import { Camera, ImagePlus, Shirt } from 'lucide-react-native';
 import { useState } from 'react';
@@ -28,6 +27,7 @@ export default function EditItem() {
           colors: item.colors,
           seasons: item.seasons,
           formality: item.formality,
+          fit: item.fit,
           brand: item.brand,
           notes: item.notes,
         }
@@ -77,7 +77,7 @@ export default function EditItem() {
     >
       <View style={styles.body}>
         {newPhoto ? (
-          <Image source={{ uri: newPhoto.uri }} style={[styles.preview, { width: size, height: size }]} contentFit="cover" />
+          <ItemImage photo={{ localPath: newPhoto.uri }} style={{ width: size, height: size }} radius={radii.lg} />
         ) : (
           <ItemImage photo={item.photo} style={{ width: size, height: size }} radius={radii.lg} />
         )}
@@ -93,7 +93,6 @@ export default function EditItem() {
 
 const styles = StyleSheet.create({
   body: { gap: space.lg, paddingTop: space.sm },
-  preview: { borderRadius: radii.lg },
   replaceRow: { flexDirection: 'row', gap: space.md, marginBottom: space.md },
   flex: { flex: 1 },
   footer: {

@@ -2,7 +2,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { router, useLocalSearchParams } from 'expo-router';
 import { ChevronLeft, ChevronRight, Heart, Layers, Lock, Plus, Shuffle } from 'lucide-react-native';
 import { useMemo, useState } from 'react';
-import { StyleSheet, useWindowDimensions, View } from 'react-native';
+import { ScrollView, StyleSheet, useWindowDimensions, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { OutfitStack } from '@/components/outfits/OutfitStack';
@@ -31,12 +31,25 @@ import { colors, gutter, radii, space } from '@/theme';
 const SLOT_LABELS: Record<Slot, string> = {
   top: 'Top',
   bottom: 'Bottom',
+  onepiece: 'One-Piece',
   outerwear: 'Layer',
   shoes: 'Shoes',
   accessory: 'Extra',
 };
 
 const RAIL = 72;
+
+/** A one-piece replaces top + bottom, so choosing one clears the other. */
+function withPiece(pieces: OutfitPieces, slot: Slot, id: string | undefined): OutfitPieces {
+  const next: OutfitPieces = { ...pieces, [slot]: id };
+  if (id && slot === 'onepiece') {
+    delete next.top;
+    delete next.bottom;
+  } else if (id && (slot === 'top' || slot === 'bottom')) {
+    delete next.onepiece;
+  }
+  return next;
+}
 
 export default function Builder() {
   const params = useLocalSearchParams<Record<string, string>>();
@@ -65,6 +78,10 @@ export default function Builder() {
   const [favorite, setFavorite] = useState(editing?.favorite ?? false);
 
   const missing = useMemo(() => missingSlots(items), [items]);
+  // Only show the one-piece slot once the wardrobe has one (or the outfit uses one).
+  const railSlots = SLOTS.filter(
+    (s) => s !== 'onepiece' || !!pieces.onepiece || items.some((i) => i.category === 'onepiece'),
+  );
   const resolved = resolvePieces(pieces, itemMap);
   const harmony = resolved.length >= 2 ? outfitHarmony(resolved.map((r) => r.item)) : null;
 
@@ -123,8 +140,8 @@ export default function Builder() {
       ) : (
         <>
           <View style={styles.body}>
-            <View style={styles.rail}>
-              {SLOTS.map((slot) => {
+            <ScrollView style={styles.rail} contentContainerStyle={styles.railContent} showsVerticalScrollIndicator={false}>
+              {railSlots.map((slot) => {
                 const item = pieces[slot] ? itemMap.get(pieces[slot]!) : undefined;
                 const isLocked = locks.has(slot);
                 return (
@@ -156,7 +173,7 @@ export default function Builder() {
                   </PressableScale>
                 );
               })}
-            </View>
+            </ScrollView>
 
             <LinearGradient colors={['#2B231D', '#191411']} style={[styles.preview, { height: previewH }]}>
               {missing.length && resolved.length === 0 ? (
@@ -225,7 +242,7 @@ export default function Builder() {
         onSelect={(id) => {
           if (!picking) return;
           haptic.select();
-          setPieces({ ...pieces, [picking]: id });
+          setPieces(withPiece(pieces, picking, id));
           setPicking(null);
         }}
       />
@@ -252,7 +269,8 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   body: { flex: 1, flexDirection: 'row', paddingHorizontal: gutter, gap: space.md },
-  rail: { width: RAIL, gap: space.sm },
+  rail: { width: RAIL, flexGrow: 0 },
+  railContent: { gap: space.sm, paddingBottom: space.md },
   slot: { alignItems: 'center', gap: 4 },
   slotImg: { width: RAIL - 8, height: RAIL - 8 },
   slotLocked: { borderWidth: 2, borderColor: colors.cream },

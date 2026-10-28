@@ -17,8 +17,8 @@ export interface ItemImageProps {
 
 /**
  * Every clothing photo sits on the same warm "studio" backdrop so a wardrobe of mixed user photos
- * still reads as one curated set. Background-removed cutouts (planned) render contained on that
- * backdrop for a true product-shot look; regular photos fill the frame.
+ * still reads as one curated set. The whole photo is always shown (never cropped); once
+ * background-removed cutouts exist they render inset on the backdrop for a product-shot look.
  */
 export function ItemImage({ photo, style, radius = 14, inset = 10 }: ItemImageProps) {
   const uri = resolvePhotoUri(photo);
@@ -30,7 +30,7 @@ export function ItemImage({ photo, style, radius = 14, inset = 10 }: ItemImagePr
         <Image
           source={{ uri }}
           style={[StyleSheet.absoluteFill, isCutout && { margin: inset }]}
-          contentFit={isCutout ? 'contain' : 'cover'}
+          contentFit="contain"
           transition={180}
           recyclingKey={uri}
         />
@@ -39,8 +39,6 @@ export function ItemImage({ photo, style, radius = 14, inset = 10 }: ItemImagePr
           <Shirt size={28} color={colors.taupe} strokeWidth={1.2} />
         </View>
       )}
-      {/* Soft warm wash to unify photos shot under different lighting. */}
-      {uri && !isCutout ? <View style={styles.wash} pointerEvents="none" /> : null}
     </View>
   );
 }
@@ -48,5 +46,4 @@ export function ItemImage({ photo, style, radius = 14, inset = 10 }: ItemImagePr
 const styles = StyleSheet.create({
   frame: { overflow: 'hidden', backgroundColor: colors.creamMuted },
   placeholder: { flex: 1, alignItems: 'center', justifyContent: 'center' },
-  wash: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(120, 90, 60, 0.06)' },
 });

@@ -1,10 +1,12 @@
-import type { ClothingItem, ColorId } from '../wardrobe/types';
+import type { ClothingItem, ColorId, ItemFit } from '../wardrobe/types';
 import { outfitHarmony } from './harmony';
 import { REQUIRED_SLOTS, SLOTS, type OutfitPieces, type Slot } from './types';
 
 export interface StylePreferences {
   favoriteColors: ColorId[];
   avoidColors: ColorId[];
+  /** Preferred fit; "Mixed" or undefined means no preference. */
+  fit?: ItemFit | 'Mixed';
 }
 
 export interface GenerateOptions {
@@ -26,6 +28,7 @@ export interface ScoredOutfit {
 }
 
 const OPTIONAL_SLOTS: Slot[] = ['outerwear', 'accessory'];
+const FIT_ORDER: ItemFit[] = ['Slim', 'Fitted', 'Regular', 'Relaxed', 'Oversized'];
 const MAX_ATTEMPTS = 400;
 const RECENT_WEAR_MS = 2 * 24 * 60 * 60 * 1000;
 
@@ -45,6 +48,7 @@ export function groupBySlot(items: ClothingItem[]): Record<Slot, ClothingItem[]>
   const groups: Record<Slot, ClothingItem[]> = {
     top: [],
     bottom: [],
+    onepiece: [],
     outerwear: [],
     shoes: [],
     accessory: [],
@@ -53,10 +57,16 @@ export function groupBySlot(items: ClothingItem[]): Record<Slot, ClothingItem[]>
   return groups;
 }
 
-/** Required slots that have no items, i.e. what's blocking outfit generation. */
+/**
+ * Required slots that have no items, i.e. what's blocking outfit generation. Owning a one-piece
+ * covers both top and bottom.
+ */
 export function missingSlots(items: ClothingItem[]): Slot[] {
   const groups = groupBySlot(items);
-  return REQUIRED_SLOTS.filter((slot) => groups[slot].length === 0);
+  const coveredByOnePiece = groups.onepiece.length > 0;
+  return REQUIRED_SLOTS.filter(
+    (slot) => groups[slot].length === 0 && !(coveredByOnePiece && slot !== 'shoes'),
+  );
 }
 
 export function piecesKey(pieces: OutfitPieces): string {
@@ -76,8 +86,13 @@ export function scoreOutfit(
     score += Math.min(fav, 0.1);
     for (const c of preferences.avoidColors) if (colors.has(c)) score -= 0.15;
   }
+  const fitPref = preferences?.fit && preferences.fit !== 'Mixed' ? preferences.fit : undefined;
   for (const item of items) {
     if (item.favorite) score += 0.01;
+    if (fitPref && item.fit) {
+      const gap = Math.abs(FIT_ORDER.indexOf(item.fit) - FIT_ORDER.indexOf(fitPref));
+      score += gap === 0 ? 0.03 : gap >= 3 ? -0.05 : gap === 2 ? -0.02 : 0;
+    }
     if (item.lastWornAt && now.getTime() - Date.parse(item.lastWornAt) < RECENT_WEAR_MS) {
       score -= 0.06;
     }
@@ -92,8 +107,9 @@ function differsEnough(a: OutfitPieces, b: OutfitPieces): boolean {
 }
 
 /**
- * Builds complete outfits (top + bottom + shoes, optional outerwear/accessory) by sampling
- * combinations and ranking them with the harmony score. Returns [] when a required slot is empty.
+ * Builds complete outfits (top + bottom or a one-piece, plus shoes and optional
+ * outerwear/accessory) by sampling
+ * combinations and ranking them with the harmony score. Returns [] when nothing complete can be made.
  */
 export function generateOutfits(items: ClothingItem[], options: GenerateOptions = {}): ScoredOutfit[] {
   const { locked = {}, extraItems = [], count = 3, seed = 1, preferences, now } = options;
@@ -115,16 +131,31 @@ export function generateOutfits(items: ClothingItem[], options: GenerateOptions 
       pools[slot] = groups[slot];
     }
   }
-  if (REQUIRED_SLOTS.some((s) => pools[s].length === 0)) return [];
 
-  const combos = SLOTS.reduce((n, s) => n * pools[s].length, 1);
-  const attempts = Math.min(MAX_ATTEMPTS, combos * 3);
+  // An outfit is either separates (top + bottom) or a one-piece; locks decide when one is pinned.
+  const canSeparates = !locked.onepiece && pools.top.length > 0 && pools.bottom.length > 0;
+  const canOnePiece = !locked.top && !locked.bottom && pools.onepiece.length > 0;
+  if (pools.shoes.length === 0 || (!canSeparates && !canOnePiece)) return [];
+  const onePieceShare = !canSeparates
+    ? 1
+    : !canOnePiece
+      ? 0
+      : pools.onepiece.length / (pools.onepiece.length + pools.top.length);
+
+  const sepCombos = canSeparates ? pools.top.length * pools.bottom.length : 0;
+  const opCombos = canOnePiece ? pools.onepiece.length : 0;
+  const rest = pools.outerwear.length * pools.shoes.length * pools.accessory.length;
+  const attempts = Math.min(MAX_ATTEMPTS, (sepCombos + opCombos) * rest * 3);
   const seen = new Map<string, { pieces: OutfitPieces; score: number; rank: number }>();
 
   for (let i = 0; i < attempts; i++) {
+    const onePiece = rng() < onePieceShare;
+    const slots = SLOTS.filter((s) =>
+      onePiece ? s !== 'top' && s !== 'bottom' : s !== 'onepiece',
+    );
     const pieces: OutfitPieces = {};
     const chosen: ClothingItem[] = [];
-    for (const slot of SLOTS) {
+    for (const slot of slots) {
       const pool = pools[slot];
       const pick = pool[Math.floor(rng() * pool.length)] ?? null;
       if (pick) {

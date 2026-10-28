@@ -17,7 +17,7 @@ export default function TryOn() {
   const frameW = width - gutter * 2;
 
   const pick = async (source: PhotoSource) => {
-    const photo = await pickPhoto(source, [3, 4]);
+    const photo = await pickPhoto(source);
     if (!photo) return;
     setBusy(true);
     try {
@@ -43,7 +43,7 @@ export default function TryOn() {
 
       <View style={[styles.frame, { width: frameW, height: (frameW * 4) / 3 }]}>
         {uri ? (
-          <Image source={{ uri }} style={StyleSheet.absoluteFill} contentFit="cover" transition={200} />
+          <Image source={{ uri }} style={StyleSheet.absoluteFill} contentFit="contain" transition={200} />
         ) : (
           <View style={styles.empty}>
             <ScanFace size={40} color={colors.taupe} strokeWidth={1.2} />

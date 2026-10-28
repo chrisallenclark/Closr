@@ -16,8 +16,9 @@ export interface OutfitBoardProps {
  * background-removed cutouts later.
  */
 export function OutfitBoard({ pieces, width, gap = 6, radius = 12 }: OutfitBoardProps) {
-  const main = pieces.filter((p) => p.slot === 'top' || p.slot === 'bottom');
-  const side = pieces.filter((p) => p.slot !== 'top' && p.slot !== 'bottom');
+  const isMain = (p: ResolvedPiece) => p.slot === 'top' || p.slot === 'bottom' || p.slot === 'onepiece';
+  const main = pieces.filter(isMain);
+  const side = pieces.filter((p) => !isMain(p));
 
   if (side.length === 0 || main.length === 0) {
     // Simple grid when there's nothing to split.
@@ -34,7 +35,9 @@ export function OutfitBoard({ pieces, width, gap = 6, radius = 12 }: OutfitBoard
 
   const mainW = Math.round(width * 0.6);
   const sideW = width - mainW - gap;
-  const height = mainW * main.length + gap * (main.length - 1);
+  // A one-piece fills the whole main column (the height of a top + bottom).
+  const tileH = (p: ResolvedPiece) => (p.slot === 'onepiece' ? mainW * 2 + gap : mainW);
+  const height = Math.max(mainW * 2 + gap, main.reduce((h, p) => h + tileH(p), 0) + gap * (main.length - 1));
   const sideCount = Math.max(side.length, 2);
   const sideCell = Math.min(sideW, (height - gap * (sideCount - 1)) / sideCount);
 
@@ -42,7 +45,7 @@ export function OutfitBoard({ pieces, width, gap = 6, radius = 12 }: OutfitBoard
     <View style={[styles.row, { width, height, gap }]}>
       <View style={{ gap }}>
         {main.map((p) => (
-          <ItemImage key={p.item.id} photo={p.item.photo} radius={radius} style={{ width: mainW, height: mainW }} />
+          <ItemImage key={p.item.id} photo={p.item.photo} radius={radius} style={{ width: mainW, height: tileH(p) }} />
         ))}
       </View>
       <View style={[styles.side, { width: sideW, gap }]}>

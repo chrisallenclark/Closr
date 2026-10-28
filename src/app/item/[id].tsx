@@ -103,7 +103,8 @@ export default function ItemDetail() {
             ) : null}
             <Text variant="display">{item.name}</Text>
             <Text variant="caption" color={colors.textMuted}>
-              {getSubcategoryLabel(item.category, item.subcategory)} · {FORMALITY_LABELS[item.formality]}
+              {getSubcategoryLabel(item.category, item.subcategory)}
+              {item.fit ? ` · ${item.fit} fit` : ''} · {FORMALITY_LABELS[item.formality]}
               {seasons.length ? ` · ${seasons.join(', ')}` : ''}
             </Text>
           </View>

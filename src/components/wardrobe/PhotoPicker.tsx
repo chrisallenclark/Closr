@@ -20,7 +20,7 @@ export interface PhotoPickerProps {
 export function PhotoPicker({ photo, onPicked, size, hint, aspect = [1, 1] }: PhotoPickerProps) {
   const height = (size * aspect[1]) / aspect[0];
   const pick = async (source: PhotoSource) => {
-    const result = await pickPhoto(source, aspect);
+    const result = await pickPhoto(source);
     if (result) onPicked(result);
   };
 
@@ -29,7 +29,7 @@ export function PhotoPicker({ photo, onPicked, size, hint, aspect = [1, 1] }: Ph
       <LinearGradient colors={gradients.studio} style={StyleSheet.absoluteFill} />
       {photo ? (
         <>
-          <Image source={{ uri: photo.uri }} style={StyleSheet.absoluteFill} contentFit="cover" transition={150} />
+          <Image source={{ uri: photo.uri }} style={StyleSheet.absoluteFill} contentFit="contain" transition={150} />
           <View style={styles.retake}>
             <IconButton icon={RefreshCw} variant="glass" size={38} onPress={() => pick('library')} accessibilityLabel="Choose another photo" />
             <IconButton icon={Camera} variant="glass" size={38} onPress={() => pick('camera')} accessibilityLabel="Retake photo" />
@@ -42,7 +42,7 @@ export function PhotoPicker({ photo, onPicked, size, hint, aspect = [1, 1] }: Ph
             Add a photo
           </Text>
           <Text variant="caption" color={colors.inkMuted} align="center" style={styles.hint}>
-            {hint ?? 'Lay it flat on a plain surface in soft light and fill the frame.'}
+            {hint ?? 'Lay it flat or hang it on a plain background in soft light. The whole photo is kept.'}
           </Text>
           <View style={styles.buttons}>
             <Button label="Camera" icon={Camera} onPress={() => pick('camera')} size="sm" style={styles.dark} variant="secondary" />

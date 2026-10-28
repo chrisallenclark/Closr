@@ -1,9 +1,13 @@
-export type Slot = 'top' | 'bottom' | 'outerwear' | 'shoes' | 'accessory';
+import type { Category } from '../wardrobe/types';
 
-export const SLOTS: Slot[] = ['top', 'bottom', 'outerwear', 'shoes', 'accessory'];
+/** Slots map 1:1 to wardrobe categories. */
+export type Slot = Category;
+
+export const SLOTS: Slot[] = ['top', 'bottom', 'onepiece', 'outerwear', 'shoes', 'accessory'];
+/** Slots a complete outfit needs when built from separates; a one-piece replaces top + bottom. */
 export const REQUIRED_SLOTS: Slot[] = ['top', 'bottom', 'shoes'];
 
-/** Item id per slot. Slots map 1:1 to wardrobe categories. */
+/** Item id per slot. */
 export type OutfitPieces = Partial<Record<Slot, string>>;
 
 export const OCCASIONS = [

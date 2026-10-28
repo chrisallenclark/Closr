@@ -21,6 +21,7 @@ export function usePreferences(): StylePreferences {
     () => ({
       favoriteColors: profile ? preferredColors(profile) : [],
       avoidColors: profile?.avoidColors ?? [],
+      fit: profile?.fit,
     }),
     [profile],
   );

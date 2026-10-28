@@ -60,14 +60,11 @@ function settingsAlert(what: string) {
 }
 
 /** Opens the camera or photo library. Returns null if the user cancels or denies access. */
-export async function pickPhoto(
-  source: PhotoSource,
-  aspect: [number, number] = [1, 1],
-): Promise<PickedPhoto | null> {
+export async function pickPhoto(source: PhotoSource): Promise<PickedPhoto | null> {
+  // No forced crop: the whole photo is kept and shown fitted on the studio backdrop.
   const options: ImagePicker.ImagePickerOptions = {
     mediaTypes: ['images'],
-    allowsEditing: true,
-    aspect,
+    allowsEditing: false,
     quality: 1,
   };
 

@@ -28,11 +28,12 @@ export function OutfitStack({ pieces, width, height }: OutfitStackProps) {
   const shoes = by('shoes');
   const outer = by('outerwear');
   const accessory = by('accessory');
+  const onepiece = by('onepiece');
 
-  const tile = (p: ResolvedPiece | undefined, size: number, style: object) =>
+  const tile = (p: ResolvedPiece | undefined, size: number, style: object, height = size) =>
     p ? (
       <Animated.View key={`${p.slot}-${p.item.id}`} entering={FadeIn.duration(260)} exiting={FadeOut.duration(160)} style={[styles.shadow, style]}>
-        <ItemImage photo={p.item.photo} style={{ width: size, height: size }} radius={16} />
+        <ItemImage photo={p.item.photo} style={{ width: size, height }} radius={16} />
       </Animated.View>
     ) : null;
 
@@ -47,6 +48,7 @@ export function OutfitStack({ pieces, width, height }: OutfitStackProps) {
       {tile(accessory, side * 0.8, { position: 'absolute', right: 0, top: bottomY + main * 0.2, zIndex: 0 })}
       {tile(bottom, main, { position: 'absolute', left: mainLeft, top: bottomY, zIndex: 1 })}
       {tile(top, main, { position: 'absolute', left: mainLeft, top: topY, zIndex: 2 })}
+      {tile(onepiece, main, { position: 'absolute', left: mainLeft, top: topY, zIndex: 2 }, main * 1.7)}
       {tile(shoes, shoe, { position: 'absolute', left: (width - shoe) / 2 + main * 0.12, top: shoesY, zIndex: 3 })}
     </View>
   );

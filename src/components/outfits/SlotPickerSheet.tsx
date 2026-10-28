@@ -4,7 +4,7 @@ import { StyleSheet, useWindowDimensions, View } from 'react-native';
 
 import { ItemTile } from '@/components/wardrobe/ItemTile';
 import { PressableScale, Sheet, Text } from '@/components/ui';
-import { REQUIRED_SLOTS, type Slot } from '@/features/outfits/types';
+import type { Slot } from '@/features/outfits/types';
 import { getCategory } from '@/features/wardrobe/catalog';
 import type { ClothingItem } from '@/features/wardrobe/types';
 import { colors, gutter, radii, space } from '@/theme';
@@ -27,11 +27,12 @@ export function SlotPickerSheet({ slot, items, selectedId, locked, onSelect, onT
   const size = (width - gutter * 2 - GAP * (COLS - 1)) / COLS;
   if (!slot) return null;
   const def = getCategory(slot);
-  const optional = !REQUIRED_SLOTS.includes(slot);
+  // Shoes are always needed; every other slot can be left empty (a one-piece covers top + bottom).
+  const optional = slot !== 'shoes';
   const options = items.filter((i) => i.category === slot);
 
   return (
-    <Sheet visible={!!slot} onClose={onClose} title={`Choose ${slot === 'accessory' ? 'an accessory' : def.label.toLowerCase()}`}>
+    <Sheet visible={!!slot} onClose={onClose} title={`Choose ${slot === 'accessory' || slot === 'outerwear' || slot === 'onepiece' ? (slot === 'onepiece' ? 'a one-piece' : slot === 'accessory' ? 'an accessory' : 'a layer') : def.label.toLowerCase()}`}>
       <PressableScale onPress={onToggleLock} style={styles.lockRow} hapticFeedback="select">
         {locked ? <Lock size={16} color={colors.cream} /> : <LockOpen size={16} color={colors.textMuted} />}
         <Text variant="label" color={locked ? colors.text : colors.textMuted} style={styles.flex}>

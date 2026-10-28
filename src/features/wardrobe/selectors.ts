@@ -50,7 +50,14 @@ export function groupBySubcategory(items: ClothingItem[]): SubcategoryGroup[] {
 }
 
 export function countByCategory(items: ClothingItem[]): Record<Category, number> {
-  const counts: Record<Category, number> = { top: 0, bottom: 0, outerwear: 0, shoes: 0, accessory: 0 };
+  const counts: Record<Category, number> = {
+    top: 0,
+    bottom: 0,
+    onepiece: 0,
+    outerwear: 0,
+    shoes: 0,
+    accessory: 0,
+  };
   for (const i of items) counts[i.category]++;
   return counts;
 }

@@ -3,7 +3,10 @@ import { StyleSheet, View } from 'react-native';
 import { Chip, ChipWrap, ColorSwatches, PressableScale, Text, TextField } from '@/components/ui';
 import {
   CATEGORIES,
+  defaultFit,
   defaultFormality,
+  hasFit,
+  ITEM_FITS,
   FORMALITY_LABELS,
   getCategory,
   SEASONS,
@@ -79,7 +82,12 @@ export function ItemForm({ draft, onChange, mode = 'full', nameEdited, onNameEdi
               selected={draft.category === c.id}
               onPress={() => {
                 const sub = c.subcategories[0]!.id;
-                update({ category: c.id, subcategory: sub, formality: defaultFormality(c.id, sub) });
+                update({
+                  category: c.id,
+                  subcategory: sub,
+                  formality: defaultFormality(c.id, sub),
+                  fit: hasFit(c.id) ? (defaultFit(c.id, sub) ?? draft.fit) : undefined,
+                });
               }}
             />
           ))}
@@ -93,7 +101,7 @@ export function ItemForm({ draft, onChange, mode = 'full', nameEdited, onNameEdi
               key={s.id}
               label={s.label}
               selected={draft.subcategory === s.id}
-              onPress={() => update({ subcategory: s.id, formality: s.formality })}
+              onPress={() => update({ subcategory: s.id, formality: s.formality, fit: s.fit ?? draft.fit })}
             />
           ))}
         </ChipWrap>
@@ -102,6 +110,21 @@ export function ItemForm({ draft, onChange, mode = 'full', nameEdited, onNameEdi
       <Section title="Colour" hint={`Main colour first · up to ${MAX_COLORS}`}>
         <ColorSwatches selected={draft.colors} onToggle={toggleColor} ordered />
       </Section>
+
+      {hasFit(draft.category) ? (
+        <Section title="Fit" hint="Optional">
+          <ChipWrap>
+            {ITEM_FITS.map((f) => (
+              <Chip
+                key={f}
+                label={f}
+                selected={draft.fit === f}
+                onPress={() => update({ fit: draft.fit === f ? undefined : f })}
+              />
+            ))}
+          </ChipWrap>
+        </Section>
+      ) : null}
 
       <Section title="Dress level">
         <View style={styles.segment}>

@@ -1,4 +1,8 @@
-export type Category = 'top' | 'bottom' | 'outerwear' | 'shoes' | 'accessory';
+/** `onepiece` (dresses, jumpsuits, swimsuits…) stands in for a top and bottom together. */
+export type Category = 'top' | 'bottom' | 'onepiece' | 'outerwear' | 'shoes' | 'accessory';
+
+/** How a garment fits. Matches the profile's fit preference (minus "Mixed"). */
+export type ItemFit = 'Slim' | 'Fitted' | 'Regular' | 'Relaxed' | 'Oversized';
 
 export type Season = 'spring' | 'summer' | 'fall' | 'winter';
 
@@ -31,6 +35,7 @@ export interface ClothingItem {
   colors: ColorId[];
   seasons: Season[];
   formality: Formality;
+  fit?: ItemFit;
   brand?: string;
   notes?: string;
   favorite: boolean;
@@ -44,5 +49,5 @@ export interface ClothingItem {
 /** The editable fields of an item, used by the add/edit form. */
 export type ClothingDraft = Pick<
   ClothingItem,
-  'name' | 'category' | 'subcategory' | 'colors' | 'seasons' | 'formality' | 'brand' | 'notes'
+  'name' | 'category' | 'subcategory' | 'colors' | 'seasons' | 'formality' | 'fit' | 'brand' | 'notes'
 >;

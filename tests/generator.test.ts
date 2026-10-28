@@ -1,4 +1,4 @@
-import { generateOutfits, missingSlots, piecesKey } from '@/features/outfits/generator';
+import { generateOutfits, missingSlots, piecesKey, scoreOutfit } from '@/features/outfits/generator';
 
 import { item } from './fixtures';
 
@@ -69,5 +69,58 @@ describe('generateOutfits', () => {
     const looks = generateOutfits(wardrobe, { locked: { top: 'new' }, extraItems: [candidate] });
     expect(looks.length).toBeGreaterThan(0);
     expect(looks.every((l) => l.pieces.top === 'new')).toBe(true);
+  });
+});
+
+describe('one-pieces', () => {
+  const dressCloset = [
+    item('onepiece', 'dress', 'black', { id: 'd1' }),
+    item('onepiece', 'swimsuit', 'navy', { id: 'd2' }),
+    item('shoes', 'heels', 'black', { id: 'h1' }),
+  ];
+
+  it('count as a complete base without separate tops and bottoms', () => {
+    expect(missingSlots(dressCloset)).toEqual([]);
+    const looks = generateOutfits(dressCloset, { count: 2 });
+    expect(looks.length).toBeGreaterThan(0);
+    for (const look of looks) {
+      expect(look.pieces.onepiece).toBeDefined();
+      expect(look.pieces.top).toBeUndefined();
+      expect(look.pieces.bottom).toBeUndefined();
+    }
+  });
+
+  it('never mix a one-piece with a top or bottom', () => {
+    const looks = generateOutfits([...wardrobe, ...dressCloset], { count: 3, seed: 9 });
+    for (const look of looks) {
+      const separates = !!look.pieces.top || !!look.pieces.bottom;
+      expect(separates && !!look.pieces.onepiece).toBe(false);
+      if (!look.pieces.onepiece) expect(look.pieces.top && look.pieces.bottom).toBeTruthy();
+    }
+  });
+
+  it('switch to separates when a top is locked', () => {
+    const looks = generateOutfits([...wardrobe, ...dressCloset], { locked: { top: 't1' } });
+    expect(looks.every((l) => l.pieces.top === 't1' && !l.pieces.onepiece)).toBe(true);
+  });
+});
+
+describe('fit preference', () => {
+  it('scores matching fits above opposite fits', () => {
+    const bottom = item('bottom', 'jeans', 'denim');
+    const shoes = item('shoes', 'sneakers', 'white');
+    const prefs = { favoriteColors: [], avoidColors: [], fit: 'Oversized' as const };
+    const baggy = scoreOutfit([item('top', 'baggy-tee', 'black', { fit: 'Oversized' }), bottom, shoes], prefs);
+    const slim = scoreOutfit([item('top', 'basic-tee', 'black', { fit: 'Slim' }), bottom, shoes], prefs);
+    expect(baggy).toBeGreaterThan(slim);
+  });
+
+  it('ignores fit when the preference is Mixed', () => {
+    const bottom = item('bottom', 'jeans', 'denim');
+    const shoes = item('shoes', 'sneakers', 'white');
+    const prefs = { favoriteColors: [], avoidColors: [], fit: 'Mixed' as const };
+    const a = scoreOutfit([item('top', 'baggy-tee', 'black', { fit: 'Oversized' }), bottom, shoes], prefs);
+    const b = scoreOutfit([item('top', 'basic-tee', 'black', { fit: 'Slim' }), bottom, shoes], prefs);
+    expect(a).toBe(b);
   });
 });
