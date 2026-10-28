@@ -5,9 +5,13 @@ import { nowIso } from '@/lib/time';
 import { deletePhoto, persistPhoto, type PickedPhoto } from '@/services/photos';
 import { appStorage, STORAGE_KEYS } from '@/services/storage';
 
+import { migrateV1, type ProfileV1 } from './migrations';
 import type { StyleProfile } from './types';
 
-type ProfileInput = Pick<StyleProfile, 'name' | 'styleTags' | 'favoriteColors' | 'avoidColors'>;
+type ProfileInput = Pick<
+  StyleProfile,
+  'name' | 'styleTags' | 'palettes' | 'favoriteColors' | 'avoidColors' | 'fit'
+>;
 
 interface ProfileState {
   profile: StyleProfile | null;
@@ -48,8 +52,13 @@ export const useProfile = create<ProfileState>()(
     {
       name: STORAGE_KEYS.profile,
       storage: appStorage,
-      version: 1,
+      version: 2,
       partialize: (s) => ({ profile: s.profile }),
+      migrate: (persisted, version) => {
+        const state = persisted as { profile: StyleProfile | ProfileV1 | null };
+        if (version < 2 && state.profile) state.profile = migrateV1(state.profile as ProfileV1);
+        return state as { profile: StyleProfile | null };
+      },
     },
   ),
 );

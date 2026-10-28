@@ -4,11 +4,12 @@ import { useState } from 'react';
 import { StyleSheet, View } from 'react-native';
 import Animated, { FadeIn, FadeInDown } from 'react-native-reanimated';
 
+import { FitPicker } from '@/components/profile/FitPicker';
+import { PalettePicker } from '@/components/profile/PalettePicker';
 import {
   Button,
   Chip,
   ChipWrap,
-  ColorSwatches,
   haptic,
   IconButton,
   Screen,
@@ -17,10 +18,10 @@ import {
   Wordmark,
 } from '@/components/ui';
 import { useProfile } from '@/features/profile/store';
-import { STYLE_TAGS, type StyleTag } from '@/features/profile/types';
+import { STYLE_TAGS, type Fit, type PaletteId, type StyleTag } from '@/features/profile/types';
 import { colors, gutter, space } from '@/theme';
 
-const STEPS = 3;
+const STEPS = 4;
 
 function Progress({ step }: { step: number }) {
   return (
@@ -72,15 +73,23 @@ export default function Onboarding() {
   const [step, setStep] = useState(0);
   const [name, setName] = useState('');
   const [tags, setTags] = useState<StyleTag[]>([]);
-  const [favorites, setFavorites] = useState<string[]>([]);
+  const [palettes, setPalettes] = useState<PaletteId[]>([]);
+  const [fit, setFit] = useState<Fit | undefined>();
 
   if (step === 0) return <Welcome onStart={() => setStep(1)} />;
 
-  const canContinue = step === 1 ? name.trim().length > 0 : step === 2 ? tags.length > 0 : true;
+  const canContinue =
+    step === 1
+      ? name.trim().length > 0
+      : step === 2
+        ? tags.length > 0
+        : step === 3
+          ? palettes.length > 0
+          : !!fit;
   const next = () => {
     if (step < STEPS) return setStep(step + 1);
     haptic.success();
-    complete({ name: name.trim(), styleTags: tags, favoriteColors: favorites, avoidColors: [] });
+    complete({ name: name.trim(), styleTags: tags, palettes, favoriteColors: [], avoidColors: [], fit });
   };
 
   const toggle = <T,>(list: T[], value: T): T[] =>
@@ -110,7 +119,7 @@ export default function Onboarding() {
         {step === 1 ? (
           <>
             <Text variant="eyebrow" color={colors.sand}>
-              Step 1 of 3
+              Welcome
             </Text>
             <Text variant="display">What should we call you?</Text>
             <TextField
@@ -128,11 +137,11 @@ export default function Onboarding() {
         {step === 2 ? (
           <>
             <Text variant="eyebrow" color={colors.sand}>
-              Step 2 of 3
+              Question 1 of 3
             </Text>
-            <Text variant="display">How would you describe your style?</Text>
+            <Text variant="display">What’s your style?</Text>
             <Text variant="body" color={colors.textMuted}>
-              Pick a few. This shapes your outfit suggestions and you can change it anytime.
+              Pick as many as feel like you. You can change this anytime.
             </Text>
             <ChipWrap>
               {STYLE_TAGS.map((t) => (
@@ -145,13 +154,23 @@ export default function Onboarding() {
         {step === 3 ? (
           <>
             <Text variant="eyebrow" color={colors.sand}>
-              Step 3 of 3
+              Question 2 of 3
             </Text>
-            <Text variant="display">Colours you reach for</Text>
+            <Text variant="display">What colours do you gravitate toward?</Text>
             <Text variant="body" color={colors.textMuted}>
-              Optional. Outfits with these colours get a small boost.
+              Choose one or more. Outfits in these colours get a boost.
             </Text>
-            <ColorSwatches selected={favorites} onToggle={(id) => setFavorites(toggle(favorites, id))} />
+            <PalettePicker selected={palettes} onToggle={(id) => setPalettes(toggle(palettes, id))} />
+          </>
+        ) : null}
+
+        {step === 4 ? (
+          <>
+            <Text variant="eyebrow" color={colors.sand}>
+              Question 3 of 3
+            </Text>
+            <Text variant="display">How do you like your clothes to fit?</Text>
+            <FitPicker value={fit} onChange={setFit} />
           </>
         ) : null}
       </Animated.View>

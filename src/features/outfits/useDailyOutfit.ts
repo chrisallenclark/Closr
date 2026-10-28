@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo } from 'react';
 import { dayKey } from '@/lib/time';
 
 import { useProfile } from '../profile/store';
+import { preferredColors } from '../profile/types';
 import { useWardrobe } from '../wardrobe/store';
 import { generateOutfits, missingSlots, type StylePreferences } from './generator';
 import { useOutfits } from './store';
@@ -18,7 +19,7 @@ export function usePreferences(): StylePreferences {
   const profile = useProfile((s) => s.profile);
   return useMemo(
     () => ({
-      favoriteColors: profile?.favoriteColors ?? [],
+      favoriteColors: profile ? preferredColors(profile) : [],
       avoidColors: profile?.avoidColors ?? [],
     }),
     [profile],

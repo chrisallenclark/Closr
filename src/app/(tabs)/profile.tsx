@@ -20,6 +20,7 @@ import {
 import { eraseAllData } from '@/features/actions';
 import { useOutfits } from '@/features/outfits/store';
 import { useProfile } from '@/features/profile/store';
+import { PALETTES } from '@/features/profile/types';
 import { CATEGORIES, getColor } from '@/features/wardrobe/catalog';
 import { countByCategory } from '@/features/wardrobe/selectors';
 import { useWardrobe } from '@/features/wardrobe/store';
@@ -84,6 +85,16 @@ export default function Profile() {
             <Chip key={t} label={t} size="sm" />
           ))}
         </ChipWrap>
+        {profile.palettes.length || profile.fit ? (
+          <Text variant="caption" color={colors.textMuted}>
+            {[
+              profile.palettes.map((id) => PALETTES.find((p) => p.id === id)?.label).join(', '),
+              profile.fit ? `${profile.fit} fit` : '',
+            ]
+              .filter(Boolean)
+              .join(' · ')}
+          </Text>
+        ) : null}
         {profile.favoriteColors.length ? (
           <View style={styles.dots}>
             {profile.favoriteColors.map((c) => (
