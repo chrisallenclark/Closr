@@ -8,9 +8,17 @@ Pipeline per item:
             shaped by the item's fit] -> background removal -> trim -> scale/anchor to the avatar
             by category + fit.
 
+Two ways to dress the mannequin:
+  layered  (default) each garment is cut out and layered on the flat SVG form, like a sticker
+           dress-up. Cheap and instant, but flat.
+  scene    one AI image per outfit: every garment photo is sent together and the model renders
+           the whole outfit worn by a photoreal headless dress form in a dark studio, with real
+           drape, tuck and stacking. Looks like a product shoot; costs one image call per outfit.
+
 Usage:
   python prototype.py --manifest sample-manifest.json --photos <dir> --out <dir>
   GEMINI_API_KEY=... python prototype.py ... --provider gemini
+  GEMINI_API_KEY=... python prototype.py ... --render scene
 
 AI results are cached in <out>/ai so re-runs don't pay twice.
 """
@@ -28,7 +36,7 @@ import urllib.request
 from pathlib import Path
 
 import cairosvg
-from PIL import Image, ImageDraw, ImageFilter, ImageFont
+from PIL import Image, ImageDraw, ImageFilter, ImageFont, ImageOps
 from rembg import new_session, remove
 
 HERE = Path(__file__).resolve().parent
@@ -75,20 +83,62 @@ def ai_prompt(item: dict) -> str:
     )
 
 
-def gemini_normalise(img: Image.Image, item: dict, key: str, model: str) -> Image.Image:
+def jpeg_part(img: Image.Image, max_side: int = 1536) -> dict:
+    img = img.convert("RGB")
+    img.thumbnail((max_side, max_side))
     buf = io.BytesIO()
-    img.convert("RGB").save(buf, format="JPEG", quality=92)
-    body = {
-        "contents": [
-            {
-                "parts": [
-                    {"text": ai_prompt(item)},
-                    {"inline_data": {"mime_type": "image/jpeg", "data": base64.b64encode(buf.getvalue()).decode()}},
-                ]
-            }
-        ],
-        "generationConfig": {"responseModalities": ["IMAGE"]},
-    }
+    img.save(buf, format="JPEG", quality=90)
+    return {"inline_data": {"mime_type": "image/jpeg", "data": base64.b64encode(buf.getvalue()).decode()}}
+
+
+def gemini_normalise(img: Image.Image, item: dict, key: str, model: str) -> Image.Image:
+    return gemini_image([{"text": ai_prompt(item)}, jpeg_part(img)], key, model)
+
+
+SLOT_NAMES = {
+    "top": "top",
+    "bottom": "bottoms",
+    "onepiece": "one-piece",
+    "outerwear": "outer layer",
+    "shoes": "shoes",
+    "accessory": "accessory",
+}
+
+
+def scene_prompt(items: list[dict]) -> str:
+    lines = []
+    for n, item in enumerate(items, 1):
+        fit = f", {item['fit']} fit ({FIT_PROMPTS[item['fit']]})" if item.get("fit") in FIT_PROMPTS else ""
+        name = item.get("name") or item["subcategory"].replace("-", " ")
+        lines.append(f"Image {n}: the {SLOT_NAMES[item['category']]}: {name}{fit}.")
+    return (
+        "Create a photorealistic fashion product photo of one complete outfit worn by a headless "
+        "matte-black dress-form mannequin with a short black neck stand, arms hidden, standing upright "
+        "and facing the camera, full body from neck to shoes, centred with a little space around it. "
+        "The mannequin wears exactly these garments, one per reference image:\n"
+        + "\n".join(lines)
+        + "\nDress it naturally: the top drapes over the shoulders and chest with realistic folds; the "
+        "bottoms sit at the waist and fall to the shoes with natural stacking; shoes are worn on the "
+        "feet, toes forward; any outer layer is worn open over the top. Respect each garment's fit. "
+        "Copy every garment exactly from its photo: colour, fabric, wash, prints, graphics, logos, "
+        "text, stitching, pockets, hardware. Do not invent, remove, mirror or restyle any detail, and "
+        "do not add garments or accessories that are not listed. Ignore people, hangers, hands, "
+        "floors and backgrounds in the reference photos. Background: dark warm charcoal-brown studio "
+        "with a soft spotlight behind the mannequin and a subtle floor shadow. Soft, even, flattering "
+        "light. Portrait 2:3 image."
+    )
+
+
+def gemini_scene(items: list[dict], photos: list[Image.Image], key: str, model: str) -> Image.Image:
+    parts = [{"text": scene_prompt(items)}] + [jpeg_part(p) for p in photos]
+    return gemini_image(parts, key, model, aspect="2:3")
+
+
+def gemini_image(parts: list[dict], key: str, model: str, aspect: str | None = None) -> Image.Image:
+    config: dict = {"responseModalities": ["IMAGE"]}
+    if aspect:
+        config["imageConfig"] = {"aspectRatio": aspect}
+    body = {"contents": [{"parts": parts}], "generationConfig": config}
     url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
     req = urllib.request.Request(
         url,
@@ -218,20 +268,43 @@ def items_sheet(rows: list[tuple[dict, Image.Image, Image.Image | None, Image.Im
 # --------------------------------------------------------------------------- main
 
 
+def load_photo(path: Path) -> Image.Image:
+    # iPhone photos are stored sideways with an EXIF rotation flag.
+    return ImageOps.exif_transpose(Image.open(path)).convert("RGB")
+
+
+def scene_sheet(outfit: dict, photos: list[Image.Image], render: Image.Image, out: Path) -> None:
+    """Originals down the left, the dressed mannequin on the right."""
+    h = 1200
+    w = round(render.width * h / render.height)
+    tile = h // max(len(photos), 1)
+    sheet = Image.new("RGBA", (tile + w, h), (20, 16, 13, 255))
+    for i, photo in enumerate(photos):
+        sheet.alpha_composite(on_cream(photo.convert("RGBA"), tile), (0, i * tile))
+    sheet.alpha_composite(resize(render.convert("RGBA"), w, h), (tile, 0))
+    label(sheet, outfit["name"])
+    sheet.convert("RGB").save(out, quality=90)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--manifest", required=True, type=Path)
     parser.add_argument("--photos", required=True, type=Path)
     parser.add_argument("--out", required=True, type=Path)
     parser.add_argument("--provider", choices=["none", "gemini"], default="none")
+    parser.add_argument("--render", choices=["layered", "scene"], default="layered")
     parser.add_argument("--model", default=os.environ.get("GEMINI_IMAGE_MODEL", "gemini-2.5-flash-image"))
     args = parser.parse_args()
 
     manifest = json.loads(args.manifest.read_text())
     key = os.environ.get("GEMINI_API_KEY", "")
-    if args.provider == "gemini" and not key:
+    if (args.provider == "gemini" or args.render == "scene") and not key:
         print("GEMINI_API_KEY is not set", file=sys.stderr)
         return 2
+
+    by_id = {i["id"]: i for i in manifest["items"]}
+    if args.render == "scene":
+        return render_scenes(manifest, by_id, args, key)
 
     for sub in ("cutouts", "outfits", "ai"):
         (args.out / sub).mkdir(parents=True, exist_ok=True)
@@ -242,7 +315,7 @@ def main() -> int:
     cuts: dict[str, Image.Image] = {}
     rows = []
     for item in manifest["items"]:
-        photo = Image.open(args.photos / item["photo"]).convert("RGB")
+        photo = load_photo(args.photos / item["photo"])
         ai_img = None
         if args.provider == "gemini":
             cached = args.out / "ai" / f"{item['id']}.png"
@@ -260,7 +333,6 @@ def main() -> int:
 
     items_sheet(rows, args.out / "items-sheet.jpg")
 
-    by_id = {i["id"]: i for i in manifest["items"]}
     renders = []
     for outfit in manifest["outfits"]:
         placed = {}
@@ -279,6 +351,24 @@ def main() -> int:
             strip.paste(r.convert("RGB").resize((thumb_w, thumb_w * 2), Image.LANCZOS), (i * thumb_w, 0))
         strip.save(args.out / "outfits-strip.jpg", quality=90)
     print(f"done → {args.out}")
+    return 0
+
+
+def render_scenes(manifest: dict, by_id: dict, args, key: str) -> int:
+    (args.out / "scenes").mkdir(parents=True, exist_ok=True)
+    order = {cat: n for n, cat in enumerate(["top", "onepiece", "outerwear", "bottom", "shoes", "accessory"])}
+    for outfit in manifest["outfits"]:
+        items = sorted((by_id[i] for i in outfit["items"]), key=lambda it: order[it["category"]])
+        photos = [load_photo(args.photos / it["photo"]) for it in items]
+        cached = args.out / "scenes" / f"{outfit['id']}.png"
+        if cached.exists():
+            render = Image.open(cached).convert("RGB")
+        else:
+            print(f"scene: {outfit['id']}…", flush=True)
+            render = gemini_scene(items, photos, key, args.model)
+            render.save(cached)
+        scene_sheet(outfit, photos, render, args.out / "scenes" / f"{outfit['id']}-sheet.jpg")
+    print(f"done → {args.out / 'scenes'}")
     return 0
 
 
