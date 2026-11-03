@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
+from pathlib import Path
 
 import numpy as np
 from PIL import Image, ImageDraw
@@ -47,6 +48,22 @@ M = {
 }
 
 
+def use_landmarks(path) -> None:
+    """Switch templates to another canonical mannequin (e.g. the v3 pose) from its landmarks.json."""
+    lm = json.loads(Path(path).read_text())
+    legs = lm["legs"]
+    M.update({k: lm[k] for k in ("cx", "shoulder_y", "crotch_y", "knee_y", "ankle_y", "floor_y")})
+    # The pants waistband sits about a third of the way from the torso seam to the crotch; tops are
+    # sized from the chest without the arm caps.
+    M["waist_y"] = lm.get("pants_waist_y", lm["crotch_y"] - 230)
+    M["waist_w"] = lm.get("pants_waist_w", round(lm["hip_w"] * 0.92))
+    M["shoulder_w"] = round(lm["shoulder_w"] * 0.88)
+    M["leg_c"] = {k: [legs[k][0]["c"], legs[k][1]["c"]] for k in ("thigh", "knee", "ankle")}
+    M["leg_scale"] = (legs["thigh"][0]["w"] + legs["thigh"][1]["w"]) / 2 / 155
+    # This mannequin has upper-arm caps: sleeves hang down over them instead of sticking out.
+    M["arm_outer"] = lm["shoulder_w"] / 2
+
+
 # Per-leg width on the mannequin (thigh, knee, hem) in px for each leg shape. Mannequin's own leg is
 # about 155 / 100 / 60, so every shape keeps air around the leg below the knee.
 LEG_WIDTHS = {
@@ -54,9 +71,17 @@ LEG_WIDTHS = {
     "slim": (165, 118, 90),
     "straight": (175, 145, 140),
     "relaxed": (188, 168, 160),
-    "baggy": (205, 195, 185),
-    "wide-leg": (215, 215, 222),
+    "baggy": (210, 200, 192),
+    "wide-leg": (222, 225, 235),
+    "extra-wide": (238, 248, 262),
 }
+
+# How far the hem pools over the shoe (px of extra length) for each stacking setting.
+STACK = {"none": 0, "slight": 25, "stacked": 60, "heavy": 95}
+
+# Hem position as a fraction of waistband -> crotch, by length class only (width is separate):
+# an oversized tee is wide, not automatically long.
+TOP_LENGTH = {"cropped": -0.15, "short": 0.30, "standard": 0.55, "long": 0.85, "longline": 1.25}
 
 
 # --------------------------------------------------------------------------- measurement
@@ -157,35 +182,38 @@ class Spec:
         return {"item": self.item, "measured": self.measured, "observed": self.observed, "targets": self.targets()}
 
     def targets(self) -> dict:
-        """Where the garment should land on the standard mannequin, in canvas pixels."""
+        """Where the garment should land on the standard mannequin, in canvas pixels.
+
+        Width, length, sleeves, leg shape and stacking are separate attributes, each set by the
+        user's choice if there is one, else by what was observed, else a default.
+        """
+        k = M.get("leg_scale", 1.0)
         if self.item["category"] == "bottom":
             m = self.measured
             waist = M["waist_w"] * 1.05
             leg = str(self.attr("leg_shape", "straight")).lower()
-            thigh, knee, hem = LEG_WIDTHS.get(leg, LEG_WIDTHS["straight"])
+            thigh, knee, hem = (v * k for v in LEG_WIDTHS.get(leg, LEG_WIDTHS["straight"]))
             # Blend in the photo's own thigh width only when the measurement is plausible (overhead
             # flat lay); angled shots exaggerate whatever is closest to the camera.
             ratio = m.get("thigh_to_waist")
             if ratio and 0.5 <= ratio <= 0.85 and m.get("confidence", 0) >= 0.7:
                 thigh = 0.5 * thigh + 0.5 * ratio * waist
-            stacked = leg in ("baggy", "wide-leg") or self.attr("length") == "stacked" or m.get("outseam_to_waist", 0) > 2.9
-            return {"leg": leg, "waist": round(waist), "thigh": round(thigh), "knee": round(knee), "hem": round(hem), "stack_px": 60 if stacked else 0}
-        fit = self.attr("fit", self.item.get("fit") or "regular").lower()
+            default_stack = {"baggy": "stacked", "wide-leg": "stacked", "extra-wide": "heavy"}.get(leg, "slight" if leg == "relaxed" else "none")
+            stack = str(self.attr("stack", "stacked" if self.attr("length") == "stacked" else default_stack)).lower()
+            return {"leg": leg, "stack": stack, "waist": round(waist), "thigh": round(thigh), "knee": round(knee), "hem": round(hem), "stack_px": STACK.get(stack, 0)}
+        fit = str(self.attr("fit", self.item.get("fit") or "regular")).lower()
         ease = {"fitted": 1.0, "slim": 1.0, "regular": 1.1, "relaxed": 1.18, "boxy": 1.25, "oversized": 1.32}.get(fit, 1.1)
-        if self.attr("boxy") is True:
+        if str(self.attr("boxy")).lower() == "true":
             ease = max(ease, 1.25)
         body = M["shoulder_w"] * ease
-        # Hem height comes from the length class and fit (proportions of the Closr mockup: even an
-        # oversized tee ends around the hip line). The photo's own length only counts when the
-        # measurement is trustworthy and plausible; hanger shots overlap other clothes.
         length_cls = str(self.attr("length", "standard")).lower()
-        hem = {"cropped": M["waist_y"] - 30, "longline": M["crotch_y"] + 60}.get(
-            length_cls, {"fitted": 830, "slim": 830, "regular": 855, "relaxed": 880, "boxy": 860, "oversized": 895}.get(fit, 870)
-        )
+        frac = TOP_LENGTH.get(length_cls, TOP_LENGTH["standard"])
+        hem = M["waist_y"] + frac * (M["crotch_y"] - M["waist_y"])
+        # The photo's own length/width ratio only counts when trustworthy (flat lay, plausible).
         ratio = self.measured.get("length_to_body")
         if ratio and 0.95 <= ratio <= 1.35 and self.measured.get("confidence", 0) >= 0.7:
-            hem = round(0.5 * hem + 0.5 * (M["shoulder_y"] + body * ratio))
-        return {"fit": fit, "body": round(body), "length": round(hem - M["shoulder_y"]), "hem_y": round(hem)}
+            hem = 0.5 * hem + 0.5 * (M["shoulder_y"] + body * ratio)
+        return {"fit": fit, "length_class": length_cls, "body": round(body), "length": round(hem - M["shoulder_y"]), "hem_y": round(hem)}
 
 
 # --------------------------------------------------------------------------- silhouette guide
@@ -212,15 +240,17 @@ def silhouette(spec: Spec) -> Image.Image:
     img = Image.new("L", (1080, 1920), 0)
     d = ImageDraw.Draw(img)
     if spec.item["category"] == "bottom":
-        bottom = M["floor_y"] - 10 + (25 if t["stack_px"] else 0)
+        # Hem height by stacking: none shows the whole shoe, heavy pools down onto it.
+        span = M["floor_y"] - M["ankle_y"]
+        bottom = M["ankle_y"] + {0: 0.15, 25: 0.5, 60: 0.8, 95: 1.0}.get(t["stack_px"], 0.8) * span
         # Inner edges never cross the centre line: wide legs stay two legs, not a skirt.
         inner = lambda x, side: cx + side * max(14, side * (x - cx))
         d.rectangle((cx - t["waist"] / 2, M["waist_y"], cx + t["waist"] / 2, M["crotch_y"] + 20), fill=255)
         for side in (-1, 1):
             # Each leg is built around the mannequin's own leg line, so even slim legs cover it.
-            c_thigh = cx + side * LEG_CENTRE["thigh"]
-            c_knee = cx + side * LEG_CENTRE["knee"]
-            c_ankle = cx + side * LEG_CENTRE["ankle"]
+            i = 0 if side < 0 else 1
+            centre = lambda k: M["leg_c"][k][i] if "leg_c" in M else cx + side * LEG_CENTRE[k]
+            c_thigh, c_knee, c_ankle = centre("thigh"), centre("knee"), centre("ankle")
             hip_outer = cx + side * t["waist"] / 2
             pts = [
                 (cx, M["crotch_y"] - 10),
@@ -242,6 +272,9 @@ def silhouette(spec: Spec) -> Image.Image:
         armhole_y = sy + 0.40 * body
         reach = body / 2 + body * reach_k
         sleeve_end_y = sy + 25 + body * length_k
+        if "arm_outer" in M:
+            reach = max(body / 2 + 20, M["arm_outer"] + 18) + body * reach_k * 0.3
+            sleeve_end_y += 40
         d.polygon(
             [
                 (cx - 65, sy - 18),
@@ -349,47 +382,75 @@ def classify(photo: Image.Image, key: str, model: str, ledger) -> dict:
 # --------------------------------------------------------------------------- registration
 
 
+_SESSION = None
+
+
 def mannequin_mask(rgb: Image.Image, scale: float = 0.25) -> np.ndarray:
-    """Bare green mannequin pixels (darker than the green background), at low resolution."""
+    """Bare green mannequin pixels at low resolution: foreground (background removal) that is still green.
+
+    Garments aren't green, so they drop out; the backdrop is removed even when it has a gradient.
+    """
+    global _SESSION
+    from rembg import new_session, remove
+
+    if _SESSION is None:
+        _SESSION = new_session("isnet-general-use")
     small = rgb.convert("RGB").resize((round(rgb.width * scale), round(rgb.height * scale)), Image.BILINEAR)
+    fg = np.array(remove(small, session=_SESSION).getchannel("A")) > 128
     a = np.array(small).astype(np.float32)
-    r, g, b = a[..., 0], a[..., 1], a[..., 2]
-    green = (g - np.maximum(r, b)) > 25
-    edge = max(2, a.shape[1] // 20)
-    bg_g = np.median(np.concatenate([g[:, :edge].ravel(), g[:, -edge:].ravel()]))  # sides are always background
-    return green & (g < bg_g - 18)
+    green = (a[..., 1] - np.maximum(a[..., 0], a[..., 2])) > 25
+    return fg & green
 
 
 def register(dressed: Image.Image, canonical: Image.Image) -> tuple[float, float, float]:
     """Scale and offset that map the dressed render onto the canonical mannequin.
 
     Image models sometimes zoom or shift the frame. Whatever stays bare green mannequin (neck, arms,
-    legs, feet, torso) is matched against the canonical mannequin over a range of scales; the
-    garment itself is ignored. Returns (scale, dx, dy) in full-resolution pixels.
+    legs, feet) is matched against the canonical mannequin over a range of scales; the garment
+    itself is ignored. Returns (scale, dx, dy) in full-resolution pixels.
     """
     from scipy.signal import fftconvolve
 
     k = 0.25
     ref = mannequin_mask(canonical, k).astype(np.float32)
-    src_full = dressed.convert("RGB")
-    best = (-1.0, 1.0, 0, 0)
-    for s in np.arange(0.70, 1.42, 0.02):
-        src = mannequin_mask(src_full.resize((round(src_full.width * s), round(src_full.height * s))), k).astype(np.float32)
+    src0 = Image.fromarray((mannequin_mask(dressed, k) * 255).astype(np.uint8))
+    best = (-1.0, 1.0, 0.0, 0.0)
+    for s in np.arange(0.60, 1.42, 0.02):
+        src = (np.array(src0.resize((round(src0.width * s), round(src0.height * s)), Image.BILINEAR)) > 127).astype(np.float32)
         corr = fftconvolve(ref, src[::-1, ::-1], mode="full")
-        # Normalise by overlap so bigger scales don't win just by having more pixels.
         score = corr.max() / np.sqrt(src.sum() * ref.sum() + 1e-6)
         if score > best[0]:
             iy, ix = np.unravel_index(corr.argmax(), corr.shape)
             best = (score, float(s), (ix - (src.shape[1] - 1)) / k, (iy - (src.shape[0] - 1)) / k)
-    _, s, dx, dy = best
-    return s, dx, dy
+    return best[1], best[2], best[3]
 
 
-def apply_registration(layer: Image.Image, s: float, dx: float, dy: float, size=(1080, 1920)) -> Image.Image:
-    scaled = layer.resize((round(layer.width * s), round(layer.height * s)), Image.LANCZOS)
-    frame = Image.new("RGBA", size, (0, 0, 0, 0))
-    frame.alpha_composite(scaled, (0, 0), (max(0, -round(dx)), max(0, -round(dy))))
-    if dx > 0 or dy > 0:
-        frame = Image.new("RGBA", size, (0, 0, 0, 0))
-        frame.paste(scaled, (round(dx), round(dy)), scaled)
+def neck_registration(dressed: Image.Image, canonical: Image.Image) -> tuple[float, float, float]:
+    """Undo a zoom/shift using the neck stand, which stays bare above every collar.
+
+    Returns (scale, dx, dy) mapping the dressed render onto the canonical frame. Used only to
+    recover a render the framing check failed; the check then runs again on the result.
+    """
+
+    def neck(img):
+        m = mannequin_mask(img, 0.5)
+        w = m.shape[1]
+        band = m[:, int(w * 0.3) : int(w * 0.7)]
+        top = int(np.nonzero(band.sum(axis=1) > 4)[0][0])
+        widths = [np.ptp(np.nonzero(band[y])[0]) if band[y].any() else 0 for y in range(top + 20, top + 60)]
+        xs = np.nonzero(band[top + 40])[0] + int(w * 0.3)
+        return top * 2, float(np.median(widths)) * 2, float(xs.mean()) * 2
+
+    tc, wc, xc = neck(canonical)
+    td, wd, xd = neck(dressed)
+    s = wc / wd
+    return s, xc - xd * s, tc - td * s
+
+
+def apply_registration(img: Image.Image, s: float, dx: float, dy: float, size=(1080, 1920), fill=None) -> Image.Image:
+    """Scale an image by s and place it at (dx, dy) on a canvas of the canonical size."""
+    mode = img.mode
+    scaled = img.resize((round(img.width * s), round(img.height * s)), Image.LANCZOS)
+    frame = Image.new(mode, size, fill if fill is not None else (0,) * len(mode))
+    frame.paste(scaled, (round(dx), round(dy)))
     return frame

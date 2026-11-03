@@ -37,25 +37,31 @@ from PIL import Image, ImageOps
 from scipy import ndimage
 
 from ai_prep import BudgetExceeded, Ledger, align, color_lock, generate, jpeg_part, key_layer, neck_anchor  # noqa: F401
-from fit_spec import M, Spec, classify, garment_mask_from, guide_image, measure_bottom, measure_top, silhouette
+from fit_spec import M, Spec, apply_registration, classify, garment_mask_from, guide_image, measure_bottom, measure_top, silhouette
 
 RENDER_MODEL = "gemini-3-pro-image"
 VISION_MODEL = "gemini-3.5-flash"
 
 # Proportions taken from the Closr Build Outfit mockup: they set the aesthetic for each fit class,
 # expressed against the mannequin, while the item's own attributes decide which class applies.
+# Width words per fit. Length is separate (LENGTH_LOOK): an oversized tee is wide, not long.
 TOP_LOOK = {
-    "fitted": "close to the torso, shoulder seams on the shoulder points, hem at the top of the hips",
-    "regular": "straight through the body with a little ease, hem just below the waistband",
-    "relaxed": "easy through the body, slightly dropped shoulders, hem covering the waistband by a few centimetres",
+    "fitted": "close to the torso, shoulder seams on the shoulder points",
+    "regular": "straight through the body with a little ease",
+    "relaxed": "easy through the body, slightly dropped shoulders",
+    "boxy": "wide and square through the body, slightly dropped shoulders",
     "oversized": (
         "wide and boxy: dropped shoulder seams well past the shoulder points, body clearly wider than the "
-        "torso, sleeves reaching toward the elbow, but SHORT for its width: the hem ends at the hip line, "
-        "covering the waistband by about a hand's width and no further. Never thigh length."
+        "torso, roomy sleeves falling toward the elbow, soft drape"
     ),
 }
-LONGLINE = "longline: the hem may reach the upper thigh."
-CROPPED = "cropped: the hem ends above the waistband, showing it."
+LENGTH_LOOK = {
+    "cropped": "Length: cropped, the hem ends just above the waistband, showing it.",
+    "short": "Length: short, the hem just covers the waistband.",
+    "standard": "Length: balanced, the hem ends at the hip line, covering the waistband by about a hand's width. Not thigh length.",
+    "long": "Length: long, the hem ends at the top of the thigh.",
+    "longline": "Length: longline, the hem reaches the upper thigh.",
+}
 
 LEG_LOOK = {
     "skinny": "skinny: close to the leg from hip to ankle",
@@ -70,6 +76,16 @@ LEG_LOOK = {
         "wide-leg: very full from the hip down, each leg as wide at the hem as at the thigh, the fabric "
         "hanging in large soft folds with clear space between the leg and the mannequin's leg"
     ),
+    "extra-wide": (
+        "extra-wide: very loose from the hip down, the leg even wider at the hem than at the thigh, heavy "
+        "fabric hanging in deep vertical folds, a lot of air around the mannequin's leg"
+    ),
+}
+STACK_LOOK = {
+    "none": "The hems end at the ankle with no break.",
+    "slight": "The hems end at the ankle with a slight break over the shoe tops.",
+    "stacked": "The hems stack in two or three soft folds over the shoe tops, ending just above the floor.",
+    "heavy": "The hems pool heavily in several deep stacked folds over the shoes, covering the laces, the back hem nearly touching the floor.",
 }
 
 
@@ -96,7 +112,7 @@ def minor(t: dict) -> bool:
 def build_prompt(spec: Spec, template: bool = False) -> str:
     o, item, t = spec.observed, spec.item, spec.targets()
     attrs = o.get("attributes", {})
-    val = lambda k: (attrs.get(k) or {}).get("value")
+    val = spec.attr  # the user's choice wins over what was observed
     graphics = []
     for g in o.get("visible_text", []):
         if any(w in g.get("location", "").lower() for w in ("label", "tag", "waistband")):
@@ -117,12 +133,7 @@ def build_prompt(spec: Spec, template: bool = False) -> str:
     leave_out = ", ".join(o.get("ignore", []) + ["store tags", "price stickers", "size stickers", "hanger"])
 
     if item["category"] == "top":
-        fit = str(val("fit") or item.get("fit") or "regular").lower()
-        look = TOP_LOOK.get(fit, TOP_LOOK["regular"])
-        if val("length") == "longline":
-            look += " " + LONGLINE
-        elif val("length") == "cropped":
-            look += " " + CROPPED
+        look = TOP_LOOK.get(t["fit"], TOP_LOOK["regular"]) + ". " + LENGTH_LOOK.get(t["length_class"], LENGTH_LOOK["standard"])
         shape = (
             f"Construction: {o.get('construction', 'top')}. Fit: {look} "
             f"{'Boxy, not tapered. ' if str(val('boxy')).lower() == 'true' else ''}"
@@ -132,8 +143,8 @@ def build_prompt(spec: Spec, template: bool = False) -> str:
         )
         dress = "Dress the mannequin from image 1 in ONLY this top. Hem loose, not tucked. The legs stay bare green mannequin."
     else:
-        leg = str(val("leg_shape") or item.get("fit") or "straight").lower()
-        stack = "Let the hems pool in two or three soft stacked folds at the ankle, resting where shoe tops would be, ending just above the floor." if t["stack_px"] > 30 or val("length") == "stacked" else "The hems end at the ankle with a slight break."
+        leg = t["leg"]
+        stack = STACK_LOOK.get(t["stack"], STACK_LOOK["none"])
         details = []
         if str(val("cargo_pockets")).lower() == "true":
             details.append("cargo pockets on the outer thighs, sitting full on the side of the leg")
@@ -242,21 +253,48 @@ def measure_layer(layer: Image.Image, category: str) -> dict:
     return {"thigh": leg(M["crotch_y"] + 60), "knee": leg(M["knee_y"]), "hem": leg(M["ankle_y"] - 40), "bottom_y": int(ys[-1])}
 
 
-def framing_check(dressed: Image.Image, canonical: Image.Image) -> dict:
-    """Reject renders where the model changed the mannequin (zoom, stretched legs, moved feet).
+def refine_registration(dressed: Image.Image, canonical: Image.Image, category: str, sc: float, dx: float, dy: float):
+    """Search scale/offset near an estimate for the best bare-band match, at quarter resolution (fast)."""
+    k = 0.25
+    small = dressed.convert("RGB").resize((round(dressed.width * k), round(dressed.height * k)), Image.BILINEAR)
+    canon_small = canonical.convert("RGB").resize((270, 480))
+    bg = tuple(int(v) for v in np.median(np.array(small)[:, :5].reshape(-1, 3), axis=0))
+    best = (-1.0, sc, dx, dy)
+    for step_s, step_o, span in ((0.02, 8, 4), (0.005, 2, 4)):
+        s0, x0, y0 = best[1], best[2], best[3]
+        for ds in np.arange(-span, span + 1) * step_s:
+            for ox in np.arange(-span, span + 1) * step_o:
+                for oy in np.arange(-span, span + 1) * step_o:
+                    s1, x1, y1 = s0 + ds, x0 + ox * 4 / 4, y0 + oy * 4 / 4
+                    cand = apply_registration(small, s1, x1 * k, y1 * k, size=(270, 480), fill=bg)
+                    score = framing_check(cand, canon_small, category)["ncc"]
+                    if score > best[0]:
+                        best = (score, s1, x1, y1)
+    return best[1], best[2], best[3]
 
-    Layers are only reusable if every garment sits on the same body, so the bare mannequin parts
-    left in the render (neck, feet, legs or torso) must line up with the canonical mannequin.
+
+def framing_check(dressed: Image.Image, canonical: Image.Image, category: str = "bottom") -> dict:
+    """Reject renders where the model changed the mannequin (zoom, shift, a different body).
+
+    Layers are only reusable if every garment sits on the same body. Each kind of garment leaves a
+    band of the mannequin bare (the torso above the waistband for pants, the neck and shoulders for
+    tops). In that band, the render's bare green pixels must correlate with the canonical image:
+    aligned renders score about 0.99, a 40 px shift about 0.7, a different mannequin below 0.6.
     """
-    from fit_spec import mannequin_mask
-
-    ref, got = mannequin_mask(canonical), mannequin_mask(dressed)
-    overlap = float((ref & got).sum() / max(1, got.sum()))
-    rows = lambda m: np.nonzero(m.any(axis=1))[0]
-    r_ref, r_got = rows(ref), rows(got)
-    feet = abs(int(r_ref[-1]) - int(r_got[-1])) * 4 if len(r_got) else 999
-    top = abs(int(r_ref[0]) - int(r_got[0])) * 4 if len(r_got) else 999
-    return {"overlap": round(overlap, 2), "feet_px": feet, "top_px": top, "ok": overlap > 0.85 and feet < 40 and top < 40}
+    a = np.array(canonical.convert("RGB").resize((270, 480))).astype(np.float32)
+    b = np.array(dressed.convert("RGB").resize((270, 480))).astype(np.float32)
+    green = lambda x: (x[..., 1] - np.maximum(x[..., 0], x[..., 2])) > 25
+    if category == "bottom":
+        y0, y1 = M["shoulder_y"] // 4, (M["waist_y"] - 40) // 4
+    else:
+        y0, y1 = 150 // 4, (M["shoulder_y"] + 40) // 4
+    both = green(a[y0:y1]) & green(b[y0:y1])  # bare in both: garment pixels drop out
+    if both.sum() < 200:
+        return {"band": [y0 * 4, y1 * 4], "ncc": 0.0, "ok": False}
+    x, y = a[y0:y1, :, 1][both], b[y0:y1, :, 1][both]
+    x, y = x - x.mean(), y - y.mean()
+    ncc = float((x * y).sum() / np.sqrt((x * x).sum() * (y * y).sum() + 1e-6))
+    return {"band": [y0 * 4, y1 * 4], "ncc": round(ncc, 3), "ok": bool(ncc > 0.95)}
 
 
 VERIFY_PROMPT = """Image 1 is the original photo of a garment. Image 2 is a product render of the same garment.
@@ -290,9 +328,41 @@ def verify(photo: Image.Image, render: Image.Image, key: str, ledger: Ledger) ->
 # --------------------------------------------------------------------------- one-off assets
 
 SHOES_PROMPT = (
-    "Keep this exact mannequin, pose, size, framing and green background. Put plain white leather low-top "
-    "sneakers with white laces and white soles on its feet, no logos, no text, toes forward. Change nothing else."
+    "Keep this exact mannequin, pose, size, framing and green background. Put chunky off-white and light grey "
+    "suede-and-mesh runner sneakers with white soles on its feet, following the feet exactly as they stand, no "
+    "logos, no text. Change nothing else."
 )
+
+REAL_SHOES_PROMPT = (
+    "Put the pair of shoes from image 2 on the feet of the mannequin in image 1: one shoe on each foot, "
+    "following the feet exactly as they stand (same angle, same turn-out), laces tied neatly. Image 2 may show "
+    "a single shoe from the side: infer the matching pair and how it looks from the front. Copy colours, "
+    "materials (suede, mesh, leather), stitching, sole colour and any logo exactly as photographed; where a "
+    "side logo would face away from the camera, show it only as it would really appear. Do not invent text. "
+    "Ignore hands, floors, boxes and other shoes in image 2. Keep the mannequin, its pose, size, position, "
+    "framing and the green background exactly as in image 1. Photorealistic."
+)
+
+
+def prepare_shoes(shoe_id: str, photo: Image.Image, canon: Image.Image, out: Path, ledger: Ledger, key: str, session) -> dict:
+    """Shoes are their own layer under the pants; the torso stays bare, so the pants alignment band applies."""
+    raw_path = out / "raw" / f"{shoe_id}.png"
+    if raw_path.exists():
+        dressed = Image.open(raw_path).convert("RGB")
+    else:
+        dressed = generate(shoe_id, [{"text": REAL_SHOES_PROMPT}, jpeg_part(canon), jpeg_part(photo)], RENDER_MODEL, ledger, key)
+        dressed.save(raw_path)
+    framing = framing_check(dressed, canon, "bottom")
+    if not framing["ok"]:
+        return {"status": "rejected: mannequin changed", "framing": framing}
+    layer = clean_layer(key_layer(dressed))
+    a = np.array(layer.getchannel("A"))
+    a[: M["ankle_y"] - 90] = 0  # only the feet: anything above is mannequin that failed to key
+    layer.putalpha(Image.fromarray(a))
+    layer = hue_guard(color_lock(layer, photo, session), photo, session)
+    layer.save(out / "layers" / f"{shoe_id}.png")
+    return {"status": "prepared", "framing": framing}
+
 
 FIT_SHEET = {
     "tops": (
@@ -357,13 +427,20 @@ def main() -> int:
     p.add_argument("--fit-sheets", action="store_true")
     p.add_argument("--template", action="store_true", help="edit the silhouette guide instead of dressing the bare mannequin")
     p.add_argument("--rekey", action="store_true", help="rebuild layers from saved renders, no API calls")
+    p.add_argument("--dry-run", action="store_true", help="build specs and guides only, no renders")
+    p.add_argument("--shoe", nargs=2, action="append", metavar=("ID", "PHOTO"), help="prepare a real pair of shoes from a photo")
+    p.add_argument("--ledger", type=Path, help="spending ledger (default: <base>/ledger.json)")
     args = p.parse_args()
 
     key = os.environ.get("GEMINI_API_KEY", "")
     for sub in ("spec", "raw", "layers", "guides"):
         (args.out / sub).mkdir(parents=True, exist_ok=True)
-    ledger = Ledger(args.base / "ledger.json", args.budget)
+    ledger = Ledger(args.ledger or args.base / "ledger.json", args.budget)
     canon = Image.open(args.base / "canonical.png").convert("RGB")
+    if (args.base / "landmarks.json").exists():
+        from fit_spec import use_landmarks
+
+        use_landmarks(args.base / "landmarks.json")
     ref = neck_anchor(canon)
 
     from rembg import new_session
@@ -381,6 +458,12 @@ def main() -> int:
             a[: M["ankle_y"] - 40] = 0
             layer.putalpha(Image.fromarray(a))
             layer.save(args.out / "layers" / "placeholder-sneakers.png")
+
+        for shoe_id, shoe_photo in args.shoe or []:
+            photo = ImageOps.exif_transpose(Image.open(args.photos / shoe_photo)).convert("RGB")
+            t0 = time.perf_counter()
+            report[shoe_id] = {**prepare_shoes(shoe_id, photo, canon, args.out, ledger, key, session), "seconds": round(time.perf_counter() - t0, 1)}
+            print(f"{shoe_id}: {report[shoe_id]}", flush=True)
 
         if args.fit_sheets:
             for kind in ("tops", "bottoms"):
@@ -413,6 +496,9 @@ def main() -> int:
             guide = guide_image(canon, sil)
             guide.save(args.out / "guides" / f"{item['id']}.jpg", quality=85)
             prompt = build_prompt(spec, template=args.template)
+            if args.dry_run:
+                print(f"{item['id']}: targets={spec.targets()}", flush=True)
+                continue
             raw_path = args.out / "raw" / f"{item['id']}.png"
             if args.rekey and raw_path.exists():
                 dressed = Image.open(raw_path).convert("RGB")
@@ -422,7 +508,21 @@ def main() -> int:
                 dressed = generate(item["id"], parts, RENDER_MODEL, ledger, key)
                 dressed.save(raw_path)
 
-            framing = framing_check(dressed, canon)
+            framing = framing_check(dressed, canon, item["category"])
+            if not framing["ok"]:
+                # A plain zoom or shift can be undone; a changed body cannot, and is rejected below.
+                from fit_spec import apply_registration, neck_registration
+
+                sc, dx, dy = neck_registration(dressed, canon)
+                bg = tuple(int(v) for v in np.median(np.array(dressed)[:, :20].reshape(-1, 3), axis=0))
+                sc, dx, dy = refine_registration(dressed, canon, item["category"], sc, dx, dy)
+                moved = apply_registration(dressed, sc, dx, dy, fill=bg)
+                again = framing_check(moved, canon, item["category"])
+                # Rescaling blurs the render a little, which costs a few points of correlation;
+                # misaligned renders score 0.7 or less, so 0.93 still separates them clearly.
+                again["ok"] = bool(again["ncc"] > 0.93)
+                if again["ok"]:
+                    dressed, framing = moved, {**again, "registered": [round(sc, 3), round(dx), round(dy)]}
             if not framing["ok"]:
                 report[item["id"]] = {"status": "rejected: mannequin changed", "framing": framing, "prompt": prompt}
                 print(f"{item['id']}: REJECTED, mannequin proportions changed {framing}", flush=True)
