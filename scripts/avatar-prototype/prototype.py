@@ -111,6 +111,8 @@ def scene_prompt(items: list[dict]) -> str:
         fit = f", {item['fit']} fit ({FIT_PROMPTS[item['fit']]})" if item.get("fit") in FIT_PROMPTS else ""
         name = item.get("name") or item["subcategory"].replace("-", " ")
         lines.append(f"Image {n}: the {SLOT_NAMES[item['category']]}: {name}{fit}.")
+    if not any(item["category"] == "shoes" for item in items):
+        lines.append("No shoes given: put plain white low-top leather sneakers with no logos on the feet.")
     return (
         "Create a photorealistic fashion product photo of one complete outfit worn by a headless "
         "matte-black dress-form mannequin with a short black neck stand, arms hidden, standing upright "
@@ -150,6 +152,8 @@ def gemini_image(parts: list[dict], key: str, model: str, aspect: str | None = N
             data = json.load(res)
     except urllib.error.HTTPError as err:
         raise RuntimeError(f"Gemini error {err.code}: {err.read().decode()[:400]}") from err
+    usage = data.get("usageMetadata", {})
+    print(f"  tokens: in={usage.get('promptTokenCount')} out={usage.get('candidatesTokenCount')}", flush=True)
     for cand in data.get("candidates", []):
         for part in cand.get("content", {}).get("parts", []):
             blob = part.get("inline_data") or part.get("inlineData")
