@@ -40,6 +40,8 @@ PRICES = {
     "gemini-2.5-flash-image": (0.30, 30.0, 0.06),
     "gemini-3.1-flash-image": (0.50, 60.0, 0.12),
     "gemini-3-pro-image": (2.00, 120.0, 0.30),
+    # Vision text calls for classification and verification: a fraction of a cent each.
+    "gemini-3.5-flash": (0.50, 3.0, 0.02),
 }
 
 CANONICAL_PROMPT = (
