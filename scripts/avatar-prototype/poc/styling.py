@@ -316,5 +316,33 @@ def compose(plate: Image.Image, shoes=None, pants=None, shirt=None, feet=None) -
     if toe is not None and pants is not None:
         frame.alpha_composite(toe)
     if shirt is not None:
+        if pants is not None:
+            # Contact shadow: the hem and lower body shade the pants just below where they rest.
+            sh = Image.fromarray((alpha(shirt) * 255).astype(np.uint8)).filter(ImageFilter.GaussianBlur(9))
+            shade = Image.new("RGBA", shirt.size, (0, 0, 0, 0))
+            shade.putalpha(Image.fromarray((np.array(sh).astype(np.float32) * 0.38 * alpha(pants)).astype(np.uint8)))
+            moved = Image.new("RGBA", shirt.size, (0, 0, 0, 0))
+            moved.alpha_composite(shade, (0, 9))
+            frame.alpha_composite(moved)
         frame.alpha_composite(shirt)
     return frame
+
+
+def rest_check(shirt: Image.Image, pants: Image.Image) -> dict:
+    """Does the shirt rest over this pants' waistband? Overlap of hem below the waistband top, per column.
+
+    min_overlap_px < 0 means a gap (the shirt floats above the waistband and the mannequin shows).
+    """
+    s, p = alpha(shirt) > 0.5, alpha(pants) > 0.5
+    cols = np.nonzero(p.any(axis=0))[0]
+    p_top = {x: int(p[:, x].argmax()) for x in cols}
+    # Waistband columns: where the pants start within 60 px of their highest point (not the legs).
+    top = int(np.percentile(list(p_top.values()), 5))  # robust to a stray speck above the waistband
+    waist_cols = [x for x in cols if p_top[x] < top + 60]
+    overlaps = []
+    for x in waist_cols:
+        ys = np.nonzero(s[:, x])[0]
+        if len(ys):
+            overlaps.append(int(ys[-1]) - p_top[x])
+    ov = np.array(overlaps) if overlaps else np.array([0])
+    return {"waist_cols": len(waist_cols), "covered_cols": int((ov > 0).sum()), "min_overlap_px": int(ov.min()), "median_overlap_px": int(np.median(ov))}

@@ -59,6 +59,17 @@ DRAPE = {
         "front. The hem is slightly irregular, a little higher on one side than the other, never a perfectly straight "
         "line. " + UNTUCKED_RULES
     ),
+    "smooth": (
+        "Smooth untucked drape for a regular or fitted knit: the shirt follows the torso and hangs cleanly to its hem "
+        "with only a few light, natural creases near the waist. No bunching, no gathering, no sag; the hem is close "
+        "to level with a very slight natural irregularity. " + UNTUCKED_RULES
+    ),
+    "crisp": (
+        "Crisp untucked drape for a woven button-up shirt: the shirt is buttoned and the fabric is a woven cotton or "
+        "linen that holds its shape, so it hangs fairly straight from the shoulders with a boxy body, soft vertical "
+        "creases and light woven wrinkles rather than knit-like sag or bunching. Keep the collar, placket, buttons, "
+        "pocket and the straight hem (with side vents if the photo shows them) exactly as photographed. " + UNTUCKED_RULES
+    ),
     "relaxed": (
         "Relaxed untucked drape: more pronounced casual bunching around the waist, with fuller horizontal folds and "
         "irregular diagonal creases where the loose fabric settles over the top of the trousers, and a gently uneven, "
@@ -77,6 +88,15 @@ DRAPE = {
         "and hangs lower at the other side. Never tucked in."
     ),
 }
+
+# Without an earlier prepared layer to anchor it, the photo alone sets the shirt (image 3 is then the style reference).
+SHIRT_PROMPT_NO_ANCHOR = (
+    "Image 1: the mannequin wearing blue reference trousers. Image 2: photo of a shirt.{ref} Dress the mannequin in "
+    "image 1 in this shirt over the blue trousers. {style} {fit} Copy the shirt exactly from image 2: colour, fabric "
+    "texture, rib or weave, neckline, armholes, seams and length. Ignore hangers, beds and backgrounds in image 2. "
+    "Do not change the trousers, the mannequin, its pose, the framing or the green background. Photorealistic "
+    "fashion product photo."
+)
 
 SHIRT_PROMPT = (
     "Image 1: the mannequin wearing blue reference trousers. Image 2: photo of a shirt. Image 3: the same shirt "
@@ -108,6 +128,24 @@ def key_shirt(render: Image.Image) -> Image.Image:
     out = Image.fromarray(np.clip(a, 0, 255).astype(np.uint8)).convert("RGBA")
     out.putalpha(Image.fromarray(alpha))
     return out
+
+
+def default_drape(observed: dict) -> str:
+    """The drape Closr shows by default, from the garment's construction, fit and length.
+
+    oversized/boxy/relaxed knit tees at standard length -> natural (soft folds, slight sag)
+    regular or fitted knits, tanks, longline                -> smooth (hangs cleanly)
+    woven button-ups (camp, oxford, flannel)                -> crisp (holds its shape)
+    Relaxed is never a default; it's prepared when a user asks for it.
+    """
+    a = observed.get("attributes", {})
+    val = lambda k: str((a.get(k) or {}).get("value", "")).lower()
+    construction = observed.get("construction", "").lower()
+    if any(w in construction for w in ("button", "camp", "oxford", "flannel", "shirt jacket", "overshirt")):
+        return "crisp"
+    if val("length") == "longline" or "tank" in construction or val("fit") in ("fitted", "regular", "slim"):
+        return "smooth" if val("boxy") != "true" else "natural"
+    return "natural"
 
 
 def untucked_check(render: Image.Image, shirt: Image.Image, wy: int, x0: int, x1: int) -> dict:
@@ -142,11 +180,15 @@ def main() -> int:
     p.add_argument("--shirt", nargs=3, action="append", metavar=("ID", "PHOTO", "FREE_LAYER"), default=[])
     p.add_argument("--styles", nargs="+", default=["soft", "blouse"])
     p.add_argument("--rekey", action="store_true")
+    p.add_argument("--observed", nargs=2, action="append", metavar=("ID", "JSON"), default=[], help="fit reading per shirt, for --styles auto")
+    p.add_argument("--fit-note", nargs=2, action="append", metavar=("ID", "TEXT"), default=[], help="fit wording for shirts without an anchor layer")
     p.add_argument("--style-ref", nargs=2, action="append", metavar=("STYLE", "IMAGE"), default=[],
                    help="a drape reference image for a style (fabric behaviour only)")
     p.add_argument("--waistband", type=int, nargs=3, metavar=("Y", "X0", "X1"), default=[754, 395, 713],
                    help="reference trousers' waistband top row and x-range, for the untucked checks")
     args = p.parse_args()
+    args.observed = dict(args.observed)
+    args.fit_note = dict(args.fit_note)
     for sub in ("raw", "layers"):
         (args.out / sub).mkdir(parents=True, exist_ok=True)
     key = os.environ.get("GEMINI_API_KEY", "")
@@ -175,20 +217,33 @@ def main() -> int:
 
         for shirt_id, photo_path, free_path in args.shirt:
             photo = ImageOps.exif_transpose(Image.open(photo_path)).convert("RGB")
-            free = Image.open(free_path).convert("RGBA")
-            # Show image 3 as the free-hanging shirt on the green mannequin, so the model sees size and print.
-            free_on_canon = canon.convert("RGBA").copy()
-            free_on_canon.alpha_composite(free)
-            for style in args.styles:
+            free = None if free_path == "-" else Image.open(free_path).convert("RGBA")
+            free_on_canon = None
+            if free is not None:
+                # Show image 3 as the free-hanging shirt on the green mannequin, so the model sees size and print.
+                free_on_canon = canon.convert("RGBA").copy()
+                free_on_canon.alpha_composite(free)
+            styles = list(args.styles)
+            if "auto" in styles:
+                obs = json.loads(Path(args.observed[shirt_id]).read_text()) if shirt_id in args.observed else {}
+                styles[styles.index("auto")] = default_drape(obs)
+                print(f"{shirt_id}: default drape -> {styles}", flush=True)
+            for style in styles:
                 name = f"{shirt_id}--{style}"
                 raw = args.out / "raw" / f"{name}.png"
                 t0 = time.perf_counter()
                 refs = dict(args.style_ref)
                 if not raw.exists():
-                    ref_text = (" Image 4 is a styling reference showing only the kind of fabric behaviour wanted at the "
+                    ref_no = 4 if free is not None else 3
+                    ref_text = (f" Image {ref_no} is a styling reference showing only the kind of fabric behaviour wanted at the "
                                 "waist; copy how the fabric folds and rests, not that garment, its colour or its length.") if style in refs else ""
-                    prompt = SHIRT_PROMPT.format(style=DRAPE[style], ref=ref_text)
-                    parts = [{"text": prompt}, jpeg_part(base), jpeg_part(photo), jpeg_part(free_on_canon.convert("RGB"))]
+                    if free is not None:
+                        prompt = SHIRT_PROMPT.format(style=DRAPE[style], ref=ref_text)
+                        parts = [{"text": prompt}, jpeg_part(base), jpeg_part(photo), jpeg_part(free_on_canon.convert("RGB"))]
+                    else:
+                        fit = args.fit_note.get(shirt_id, "")
+                        prompt = SHIRT_PROMPT_NO_ANCHOR.format(style=DRAPE[style], ref=ref_text, fit=fit)
+                        parts = [{"text": prompt}, jpeg_part(base), jpeg_part(photo)]
                     if style in refs:
                         parts.append(jpeg_part(Image.open(refs[style])))
                     img = generate(name, parts, RENDER_MODEL, ledger, key)
@@ -219,7 +274,7 @@ def main() -> int:
                     print(name, report[name], flush=True)
                     continue
                 layer = clean_layer(key_shirt(img))
-                waist = untucked_check(img, layer, *args.waistband) if style in ("natural", "relaxed") else None
+                waist = untucked_check(img, layer, *args.waistband) if style in ("natural", "relaxed", "smooth", "crisp") else None
                 if waist and not waist["ok"]:
                     layer.save(args.out / "layers" / f"{name}.rejected.png")
                     report[name] = {"status": "rejected: not fully untucked", "framing": framing, "waist": waist}
@@ -232,7 +287,10 @@ def main() -> int:
                 check = report.get(name, {}).get("verify") or verify(photo, img, key, ledger)
                 # Folding may blur fine print; missing words, a changed font or a re-drawn graphic are a
                 # different garment and the variant is rejected.
-                ignore = ("fine print", "small", "tag", "label", "trouser", "pants", "mannequin", "display", "hanger")
+                # Small body copy (a paragraph of tiny text) is rendered as approximate print on every
+                # model and can't be held to exact spelling; headline text, logos and graphics can.
+                ignore = ("fine print", "fine text", "small", "tiny", "descriptive text", "paragraph", "body copy",
+                          "tag", "label", "trouser", "pants", "mannequin", "display", "hanger")
                 changed = [m for m in check.get("mismatches", []) if not any(w in m.lower() for w in ignore)
                            and any(w in m.lower() for w in ("missing", "font", "altered", "different", "misspell", "redrawn"))]
                 status = "rejected: print changed" if changed else "prepared"
