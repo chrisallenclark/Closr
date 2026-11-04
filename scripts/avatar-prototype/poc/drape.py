@@ -42,7 +42,28 @@ REF_PANTS = (
     "the green mannequin, its pose, size and proportions, the framing and the green background. Photorealistic."
 )
 
+# Untucked drapes follow the Closr drape reference sheet: the shirt stays completely outside the
+# waistband. Only the shirt's own fabric changes; the hem is never lifted to show the waistband.
+UNTUCKED_RULES = (
+    "The shirt stays completely untucked and outside the trousers: its hem is below the waistband all the way "
+    "around, the waistband and belt loops are fully covered, there is no raised V or arch at the centre and no "
+    "part of the shirt goes into the trousers. At the centre front the hem hangs at the same height as the sides "
+    "or slightly lower, never higher; any bunching happens in the fabric above the hem, not by lifting the hem. "
+    "Keep the shirt's full length."
+)
+
 DRAPE = {
+    "natural": (
+        "Natural untucked drape: the weight of the fabric settles on the hips and the top of the trousers, making "
+        "subtle soft horizontal folds and a few gentle diagonal wrinkles just above the hem and a slight sag at the "
+        "front. The hem is slightly irregular, a little higher on one side than the other, never a perfectly straight "
+        "line. " + UNTUCKED_RULES
+    ),
+    "relaxed": (
+        "Relaxed untucked drape: more pronounced casual bunching around the waist, with fuller horizontal folds and "
+        "irregular diagonal creases where the loose fabric settles over the top of the trousers, and a gently uneven, "
+        "slightly wavy hem. " + UNTUCKED_RULES
+    ),
     "soft": (
         "Natural soft waist bunching, untucked: the shirt rests on the hips and on the waistband of the blue "
         "trousers. Just above the waistband the fabric settles into soft horizontal and diagonal folds where it "
@@ -59,7 +80,7 @@ DRAPE = {
 
 SHIRT_PROMPT = (
     "Image 1: the mannequin wearing blue reference trousers. Image 2: photo of a shirt. Image 3: the same shirt "
-    "already prepared on this mannequin, hanging freely. Dress the mannequin in image 1 in this shirt over the "
+    "already prepared on this mannequin, hanging freely.{ref} Dress the mannequin in image 1 in this shirt over the "
     "blue trousers. {style} Keep the shirt exactly as in image 3 through the chest, shoulders and sleeves: same "
     "size, width, sleeve length and overall length (the hem may rise or fall a little where it drapes, but do not "
     "shorten or crop it), same colour and wash, and every print, word and graphic in the same place, size and "
@@ -89,6 +110,29 @@ def key_shirt(render: Image.Image) -> Image.Image:
     return out
 
 
+def untucked_check(render: Image.Image, shirt: Image.Image, wy: int, x0: int, x1: int) -> dict:
+    """Free check for untucked drapes: the reference waistband stays covered and the hem doesn't V up.
+
+    exposed     share of the waistband band (top 40 px of the blue trousers) that shows blue
+    centre_lift how much higher the hem sits at the centre front than at the sides (px)
+    """
+    a = np.array(render.convert("RGB")).astype(np.int32)
+    band = a[wy : wy + 40, x0 + 25 : x1 - 25]
+    blue = (band[..., 2] - np.maximum(band[..., 0], band[..., 1])) > 30
+    exposed = float(blue.mean())
+    al = np.array(shirt.getchannel("A")) > 128
+    cx = (x0 + x1) // 2
+    def hem(xa, xb):
+        cols = [np.nonzero(al[wy - 100 : wy + 400, x])[0] for x in range(xa, xb)]
+        ys = [c[-1] + wy - 100 for c in cols if len(c)]
+        return float(np.median(ys)) if ys else float("nan")
+    centre = hem(cx - 40, cx + 40)
+    sides = (hem(x0 + 10, x0 + 70) + hem(x1 - 70, x1 - 10)) / 2
+    lift = sides - centre
+    return {"exposed": round(exposed, 3), "centre_lift_px": round(lift, 1), "hem_centre": centre, "hem_sides": sides,
+            "ok": bool(exposed < 0.03 and lift < 25)}
+
+
 def main() -> int:
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--base-dir", required=True, type=Path, help="v3 base: canonical.png, landmarks.json")
@@ -98,6 +142,10 @@ def main() -> int:
     p.add_argument("--shirt", nargs=3, action="append", metavar=("ID", "PHOTO", "FREE_LAYER"), default=[])
     p.add_argument("--styles", nargs="+", default=["soft", "blouse"])
     p.add_argument("--rekey", action="store_true")
+    p.add_argument("--style-ref", nargs=2, action="append", metavar=("STYLE", "IMAGE"), default=[],
+                   help="a drape reference image for a style (fabric behaviour only)")
+    p.add_argument("--waistband", type=int, nargs=3, metavar=("Y", "X0", "X1"), default=[754, 395, 713],
+                   help="reference trousers' waistband top row and x-range, for the untucked checks")
     args = p.parse_args()
     for sub in ("raw", "layers"):
         (args.out / sub).mkdir(parents=True, exist_ok=True)
@@ -135,19 +183,29 @@ def main() -> int:
                 name = f"{shirt_id}--{style}"
                 raw = args.out / "raw" / f"{name}.png"
                 t0 = time.perf_counter()
+                refs = dict(args.style_ref)
                 if not raw.exists():
-                    prompt = SHIRT_PROMPT.format(style=DRAPE[style])
-                    img = generate(name, [{"text": prompt}, jpeg_part(base), jpeg_part(photo), jpeg_part(free_on_canon.convert("RGB"))], RENDER_MODEL, ledger, key)
+                    ref_text = (" Image 4 is a styling reference showing only the kind of fabric behaviour wanted at the "
+                                "waist; copy how the fabric folds and rests, not that garment, its colour or its length.") if style in refs else ""
+                    prompt = SHIRT_PROMPT.format(style=DRAPE[style], ref=ref_text)
+                    parts = [{"text": prompt}, jpeg_part(base), jpeg_part(photo), jpeg_part(free_on_canon.convert("RGB"))]
+                    if style in refs:
+                        parts.append(jpeg_part(Image.open(refs[style])))
+                    img = generate(name, parts, RENDER_MODEL, ledger, key)
                     img.save(raw)
                 img = Image.open(raw).convert("RGB")
                 framing = framing_check(img, base, "top")
                 if not framing["ok"]:
                     # The model sometimes zooms; undo a plain zoom/shift and check again.
+                    # Start from the neck estimate when the neck is visible, and always also from a few
+                    # zoom levels, since a render zoomed past the neck gives a meaningless neck estimate.
+                    starts = [(z, (1 - z) * img.width / 2, (1 - z) * img.height * 0.15) for z in (0.5, 0.58, 0.66, 0.75, 0.82, 0.9)]
                     try:
-                        starts = [neck_registration(img, base)]
+                        est = neck_registration(img, base)
+                        if 0.4 < est[0] < 1.6:
+                            starts.insert(0, est)
                     except (ZeroDivisionError, IndexError, ValueError):
-                        # Neck not found (zoomed past it): try a few zoom levels around the centre.
-                        starts = [(z, (1 - z) * img.width / 2, (1 - z) * img.height * 0.15) for z in (0.75, 0.82, 0.9)]
+                        pass
                     best = max((refine_registration(img, base, "top", *st) for st in starts),
                                key=lambda r: framing_check(apply_registration(img, *r, fill=(0, 0, 0)), base, "top")["ncc"])
                     sc, dx, dy = best
@@ -161,6 +219,13 @@ def main() -> int:
                     print(name, report[name], flush=True)
                     continue
                 layer = clean_layer(key_shirt(img))
+                waist = untucked_check(img, layer, *args.waistband) if style in ("natural", "relaxed") else None
+                if waist and not waist["ok"]:
+                    layer.save(args.out / "layers" / f"{name}.rejected.png")
+                    report[name] = {"status": "rejected: not fully untucked", "framing": framing, "waist": waist}
+                    print(name, report[name], flush=True)
+                    report_path.write_text(json.dumps(report, indent=1))
+                    continue
                 layer = hue_guard(color_lock(layer, photo, session), photo, session)
                 layer.save(args.out / "layers" / f"{name}.png")
                 # Read the print back against the photo: drape may fold lower print, never respell it.
@@ -171,7 +236,7 @@ def main() -> int:
                 changed = [m for m in check.get("mismatches", []) if not any(w in m.lower() for w in ignore)
                            and any(w in m.lower() for w in ("missing", "font", "altered", "different", "misspell", "redrawn"))]
                 status = "rejected: print changed" if changed else "prepared"
-                report[name] = {"status": status, "framing": framing, "seconds": round(time.perf_counter() - t0, 1), "verify": check, "print_problems": changed}
+                report[name] = {"status": status, "framing": framing, "seconds": round(time.perf_counter() - t0, 1), "verify": check, "print_problems": changed, "waist": waist}
                 print(name, report[name], flush=True)
                 report_path.write_text(json.dumps(report, indent=1))
     except BudgetExceeded as err:
