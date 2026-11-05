@@ -70,6 +70,18 @@ DRAPE = {
         "creases and light woven wrinkles rather than knit-like sag or bunching. Keep the collar, placket, buttons, "
         "pocket and the straight hem (with side vents if the photo shows them) exactly as photographed. " + UNTUCKED_RULES
     ),
+    "easy": (
+        "Easy untucked drape for a relaxed but not boxy knit: the body hangs loosely and fairly straight, with only a "
+        "few soft folds just above the hem where it meets the trousers; much lighter than an oversized tee, no "
+        "bunching. Keep the neckline, armholes and any cut-off or raw edges exactly as photographed. " + UNTUCKED_RULES
+    ),
+    "crisp_open": (
+        "Worn open: the button-up shirt is completely unbuttoned and the two fronts hang naturally apart from the "
+        "collar down, showing a vertical strip of the green mannequin chest and the blue trousers between them (keep "
+        "that strip green and blue, nothing else in it). The camp collar lies open and flat, the fronts fall straight "
+        "with light woven creases, buttons and buttonholes visible on the edges, straight hem outside the trousers. "
+        "Woven fabric that holds its shape; no knit sag."
+    ),
     "relaxed": (
         "Relaxed untucked drape: more pronounced casual bunching around the waist, with fuller horizontal folds and "
         "irregular diagonal creases where the loose fabric settles over the top of the trousers, and a gently uneven, "
@@ -94,8 +106,9 @@ SHIRT_PROMPT_NO_ANCHOR = (
     "Image 1: the mannequin wearing blue reference trousers. Image 2: photo of a shirt.{ref} Dress the mannequin in "
     "image 1 in this shirt over the blue trousers. {style} {fit} Copy the shirt exactly from image 2: colour, fabric "
     "texture, rib or weave, neckline, armholes, seams and length. Ignore hangers, beds and backgrounds in image 2. "
-    "Do not change the trousers, the mannequin, its pose, the framing or the green background. Photorealistic "
-    "fashion product photo."
+    "Do not change the trousers, the mannequin, its pose, the framing or the green background. The mannequin keeps "
+    "its short arm caps: do not add arms or hands. Keep the whole figure in frame from the neck cap to the feet at "
+    "exactly the same scale and position as image 1; do not zoom in. Photorealistic fashion product photo."
 )
 
 SHIRT_PROMPT = (
@@ -120,7 +133,10 @@ def key_shirt(render: Image.Image) -> Image.Image:
     blue = np.clip(((b - np.maximum(r, g)) - 22) / 40, 0, 1)
     # Shadowed blue fabric is dark and less saturated: also drop dark pixels that lean blue.
     dark_blue = ((b > r + 8) & (b > g + 4) & (a.mean(axis=2) < 70)).astype(np.float32)
-    alpha = 1 - np.maximum.reduce([green, blue, dark_blue])
+    # Shadowed green (the shirt's shadow on the mannequin, e.g. inside an open front) is dark and only weakly
+    # green by difference, but still clearly green by ratio: drop it too.
+    dark_green = ((g > 1.3 * r) & (g > 1.25 * b) & (a.mean(axis=2) < 110)).astype(np.float32)
+    alpha = 1 - np.maximum.reduce([green, blue, dark_blue, dark_green])
     alpha = np.array(Image.fromarray((alpha * 255).astype(np.uint8)).filter(ImageFilter.MinFilter(3)).filter(ImageFilter.GaussianBlur(0.7)))
     # Despill both key colours.
     a[..., 1] = np.minimum(g, np.maximum(r, b))
@@ -142,9 +158,11 @@ def default_drape(observed: dict) -> str:
     val = lambda k: str((a.get(k) or {}).get("value", "")).lower()
     construction = observed.get("construction", "").lower()
     if any(w in construction for w in ("button", "camp", "oxford", "flannel", "shirt jacket", "overshirt")):
-        return "crisp"
+        return "crisp"  # buttoned; "crisp_open" is a separate styling choice (closure), not a different garment
     if val("length") == "longline" or "tank" in construction or val("fit") in ("fitted", "regular", "slim"):
         return "smooth" if val("boxy") != "true" else "natural"
+    if val("fit") == "relaxed" and val("boxy") != "true":
+        return "easy"  # loose but not boxy: a few soft folds, not the oversized-tee drape
     return "natural"
 
 
@@ -254,7 +272,7 @@ def main() -> int:
                     # The model sometimes zooms; undo a plain zoom/shift and check again.
                     # Start from the neck estimate when the neck is visible, and always also from a few
                     # zoom levels, since a render zoomed past the neck gives a meaningless neck estimate.
-                    starts = [(z, (1 - z) * img.width / 2, (1 - z) * img.height * 0.15) for z in (0.5, 0.58, 0.66, 0.75, 0.82, 0.9)]
+                    starts = [(z, (1 - z) * img.width / 2, (1 - z) * img.height * 0.15) for z in np.arange(0.5, 0.96, 0.05)]
                     try:
                         est = neck_registration(img, base)
                         if 0.4 < est[0] < 1.6:
@@ -274,7 +292,7 @@ def main() -> int:
                     print(name, report[name], flush=True)
                     continue
                 layer = clean_layer(key_shirt(img))
-                waist = untucked_check(img, layer, *args.waistband) if style in ("natural", "relaxed", "smooth", "crisp") else None
+                waist = untucked_check(img, layer, *args.waistband) if style in ("natural", "relaxed", "smooth", "crisp", "easy") else None  # open shirts show the waistband by design
                 if waist and not waist["ok"]:
                     layer.save(args.out / "layers" / f"{name}.rejected.png")
                     report[name] = {"status": "rejected: not fully untucked", "framing": framing, "waist": waist}
