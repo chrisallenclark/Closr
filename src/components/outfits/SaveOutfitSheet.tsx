@@ -13,10 +13,11 @@ export interface SaveOutfitSheetProps {
   existing?: Outfit;
   favorite: boolean;
   source: Outfit['source'];
+  look?: Outfit['look'];
   onClose: () => void;
 }
 
-export function SaveOutfitSheet({ visible, pieces, existing, favorite, source, onClose }: SaveOutfitSheetProps) {
+export function SaveOutfitSheet({ visible, pieces, existing, favorite, source, look, onClose }: SaveOutfitSheetProps) {
   const addOutfit = useOutfits((s) => s.addOutfit);
   const updateOutfit = useOutfits((s) => s.updateOutfit);
   const toggleFavorite = useOutfits((s) => s.toggleFavorite);
@@ -39,11 +40,11 @@ export function SaveOutfitSheet({ visible, pieces, existing, favorite, source, o
     const finalName = name.trim() || 'Untitled look';
     let id: string;
     if (existing) {
-      updateOutfit(existing.id, { name: finalName, occasion, pieces });
+      updateOutfit(existing.id, { name: finalName, occasion, pieces, look });
       if (existing.favorite !== favorite) toggleFavorite(existing.id);
       id = existing.id;
     } else {
-      const outfit = addOutfit({ name: finalName, occasion, pieces, source });
+      const outfit = addOutfit({ name: finalName, occasion, pieces, source, look });
       if (favorite) toggleFavorite(outfit.id);
       id = outfit.id;
     }

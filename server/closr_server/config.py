@@ -59,6 +59,20 @@ class Config:
     def storage_dir(self) -> Path:
         return self.data_dir / "storage"
 
+    def signing_secret(self) -> bytes:
+        """Signs short-lived file URLs. Set CLOSR_SIGNING_SECRET in production; dev keeps one in data_dir."""
+        env = os.environ.get("CLOSR_SIGNING_SECRET")
+        if env:
+            return env.encode()
+        path = self.data_dir / "signing.key"
+        if not path.exists():
+            import secrets
+
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(secrets.token_hex(32))
+            path.chmod(0o600)
+        return path.read_text().strip().encode()
+
     def gemini_key(self) -> str:
         key = os.environ.get("GEMINI_API_KEY", "")
         if self.provider == "gemini" and not key:

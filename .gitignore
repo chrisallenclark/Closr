@@ -46,3 +46,5 @@ __pycache__/
 *.pyc
 # backend runtime data (private wardrobe photos, db, replay fixtures) never belongs in git
 server/data/
+closr-data/
+closr-replay/

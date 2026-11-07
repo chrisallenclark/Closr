@@ -12,4 +12,5 @@ export const STORAGE_KEYS = {
   wardrobe: 'closr.wardrobe',
   outfits: 'closr.outfits',
   profile: 'closr.profile',
+  avatar: 'closr.avatar',
 } as const;

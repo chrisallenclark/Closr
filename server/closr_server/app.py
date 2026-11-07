@@ -6,6 +6,7 @@ file is scoped to the caller; there is no route that lists or serves another use
 
 from __future__ import annotations
 
+import os
 import threading
 import time
 
@@ -40,6 +41,11 @@ def create_app(cfg: Config | None = None, run_worker: bool = True) -> FastAPI:
     svc = Service(cfg or Config())
     app = FastAPI(title="Closr garment preparation", version="0.1")
     app.state.svc = svc
+    origins = [o for o in os.environ.get("CLOSR_CORS_ORIGINS", "").split(",") if o]
+    if origins:  # only for the Expo web preview in development; the iOS app needs no CORS
+        from fastapi.middleware.cors import CORSMiddleware
+
+        app.add_middleware(CORSMiddleware, allow_origins=origins, allow_methods=["*"], allow_headers=["*"])
 
     def user(authorization: str = Header(default="")) -> str:
         token = authorization.removeprefix("Bearer ").strip()
@@ -47,6 +53,23 @@ def create_app(cfg: Config | None = None, run_worker: bool = True) -> FastAPI:
         if not uid:
             raise HTTPException(401, "sign in again")
         return uid
+
+    def with_urls(out):
+        """Adds `urls`: a signed, expiring URL for every storage key in the response."""
+        keys: set[str] = set()
+
+        def walk(v):
+            if isinstance(v, dict):
+                for x in v.values():
+                    walk(x)
+            elif isinstance(v, list):
+                for x in v:
+                    walk(x)
+            elif isinstance(v, str) and v.startswith(("users/", "shared/")) and "." in v.rsplit("/", 1)[-1]:
+                keys.add(v)
+
+        walk(out)
+        return {**out, "urls": {k: svc.sign(k) for k in sorted(keys)}}
 
     def guarded(fn, *a, **kw):
         try:
@@ -87,23 +110,23 @@ def create_app(cfg: Config | None = None, run_worker: bool = True) -> FastAPI:
 
     @app.post("/v1/items/{item_id}/jobs")
     def request_job(item_id: str, body: JobIn, uid: str = Depends(user)):
-        return guarded(svc.request_job, uid, item_id, body.category, body.corrections, body.styling, body.correctionNote, body.attempt)
+        return with_urls(guarded(svc.request_job, uid, item_id, body.category, body.corrections, body.styling, body.correctionNote, body.attempt))
 
     @app.get("/v1/jobs")
     def jobs(since: float = 0, uid: str = Depends(user)):
-        return {"jobs": svc.jobs(uid, since), "serverTime": time.time()}
+        return with_urls({"jobs": svc.jobs(uid, since), "serverTime": time.time()})
 
     @app.get("/v1/jobs/{job_id}")
     def job(job_id: str, uid: str = Depends(user)):
-        return guarded(svc.get_job, uid, job_id)
+        return with_urls(guarded(svc.get_job, uid, job_id))
 
     @app.post("/v1/variants/{variant_id}/review")
     def review(variant_id: str, body: ReviewIn, uid: str = Depends(user)):
-        return guarded(svc.review, uid, variant_id, body.approve)
+        return with_urls(guarded(svc.review, uid, variant_id, body.approve))
 
     @app.get("/v1/wardrobe/assets")
     def assets(uid: str = Depends(user)):
-        return svc.wardrobe_assets(uid)
+        return with_urls(svc.wardrobe_assets(uid))
 
     @app.delete("/v1/items/{item_id}")
     def delete_item(item_id: str, uid: str = Depends(user)):
@@ -111,8 +134,11 @@ def create_app(cfg: Config | None = None, run_worker: bool = True) -> FastAPI:
         return {"ok": True}
 
     @app.get("/v1/files/{key:path}")
-    def file(key: str, uid: str = Depends(user)):
-        path = guarded(svc.file_for, uid, key)
+    def file(key: str, exp: int = 0, sig: str = "", authorization: str = Header(default="")):
+        if sig:
+            path = guarded(svc.file_for_signature, key, exp, sig)
+        else:
+            path = guarded(svc.file_for, user(authorization), key)
         # Content-addressed or versioned keys never change, so the app may cache them forever.
         return FileResponse(path, headers={"Cache-Control": "private, max-age=31536000, immutable"})
 

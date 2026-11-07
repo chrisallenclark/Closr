@@ -206,5 +206,25 @@ def test_end_to_end_over_http(tmp_path):
     assert http.get("/v1/files/" + tee["variant"]["display"], headers=h).status_code == 200
     other = {"Authorization": f"Bearer {http.post('/v1/session').json()['token']}"}
     assert http.get("/v1/files/" + tee["variant"]["display"], headers=other).status_code == 404
+    signed = http.get("/v1/wardrobe/assets", headers=h).json()["urls"][tee["variant"]["display"]]
+    assert http.get(signed).status_code == 200  # signed URL works without the token
+    assert http.get(signed.replace("sig=", "sig=0")).status_code == 404
     usage = http.get("/v1/me", headers=h).json()["usage"]
     assert usage["usable_assets"] == 3 and usage["spent_total_usd"] == 0
+
+
+def test_signed_file_urls_grant_one_file_until_they_expire(svc, monkeypatch):
+    monkeypatch.setitem(pipeline.PREPARERS, "top", ok_preparer)
+    uid = svc.create_session()["userId"]
+    seed_analysis(svc, uid, "tee")
+    job = svc.request_job(uid, "tee", "top")
+    svc.work_once()
+    key = svc.get_job(uid, job["id"])["variant"]["display"]
+    url = svc.sign(key)
+    q = dict(p.split("=") for p in url.split("?")[1].split("&"))
+    assert svc.file_for_signature(key, int(q["exp"]), q["sig"]).exists()
+    other = svc.get_job(uid, job["id"])["variant"]["master"]
+    with pytest.raises(NotFound):
+        svc.file_for_signature(other, int(q["exp"]), q["sig"])  # signature is bound to the key
+    with pytest.raises(NotFound):
+        svc.file_for_signature(key, int(time.time()) - 10, svc._sig(key, int(time.time()) - 10))  # expired

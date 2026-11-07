@@ -5,6 +5,7 @@ import { useMemo, useState } from 'react';
 import { ScrollView, StyleSheet, useWindowDimensions, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import { MannequinStage } from '@/components/avatar/MannequinStage';
 import { OutfitStack } from '@/components/outfits/OutfitStack';
 import { SaveOutfitSheet } from '@/components/outfits/SaveOutfitSheet';
 import { SlotPickerSheet } from '@/components/outfits/SlotPickerSheet';
@@ -14,10 +15,13 @@ import {
   haptic,
   Header,
   IconButton,
+  Chip,
   ItemImage,
   PressableScale,
   Text,
 } from '@/components/ui';
+import { STACKINGS, type Stacking } from '@/features/avatar/types';
+import { useStageLayers } from '@/features/avatar/useStageLayers';
 import { generateOutfits, missingSlots } from '@/features/outfits/generator';
 import { outfitHarmony } from '@/features/outfits/harmony';
 import { parsePieces } from '@/features/outfits/params';
@@ -76,6 +80,11 @@ export default function Builder() {
   const [picking, setPicking] = useState<Slot | null>(null);
   const [saving, setSaving] = useState(false);
   const [favorite, setFavorite] = useState(editing?.favorite ?? false);
+  const [stacking, setStacking] = useState<Stacking>(editing?.look?.stacking ?? 'natural');
+  const [flat, setFlat] = useState(false);
+  // Mannequin layers come from the cached manifest: switching never prepares or generates.
+  const stage = useStageLayers(pieces);
+  const onMannequin = stage.available && !flat;
 
   const missing = useMemo(() => missingSlots(items), [items]);
   // Only show the one-piece slot once the wardrobe has one (or the outfit uses one).
@@ -113,7 +122,7 @@ export default function Builder() {
   };
 
   const previewW = width - gutter * 2 - RAIL - space.md;
-  const previewH = Math.max(320, height - insets.top - insets.bottom - 56 - 150);
+  const previewH = Math.max(320, height - insets.top - insets.bottom - 56 - 150 - (onMannequin && stage.stackable ? 34 : 0));
   const canSave = resolved.length >= 2;
 
   return (
@@ -185,9 +194,43 @@ export default function Builder() {
                     Add {missing.join(', ')} to unlock Smart Shuffle. You can still pick pieces on the left.
                   </Text>
                 </View>
+              ) : onMannequin ? (
+                <View style={StyleSheet.absoluteFill}>
+                  <MannequinStage
+                    assets={stage.assets!}
+                    urls={stage.urls}
+                    layers={stage.layers}
+                    stacking={stacking}
+                    width={previewW}
+                    height={previewH}
+                  />
+                </View>
               ) : (
                 <OutfitStack pieces={resolved} width={previewW - 24} height={previewH - 24} />
               )}
+              {stage.available ? (
+                <PressableScale
+                  onPress={() => setFlat(!flat)}
+                  style={styles.viewToggle}
+                  accessibilityRole="button"
+                  accessibilityLabel={flat ? 'Show on mannequin' : 'Show flat lay'}
+                >
+                  <Text variant="micro" color={colors.creamDeep}>
+                    {flat ? 'Mannequin' : 'Flat lay'}
+                  </Text>
+                </PressableScale>
+              ) : null}
+              {onMannequin && stage.missing.length ? (
+                <PressableScale
+                  onPress={() => router.push(`/item/prepare/${stage.missing[0]}`)}
+                  style={styles.missingNote}
+                  accessibilityRole="button"
+                >
+                  <Text variant="micro" color={colors.creamDeep}>
+                    {stage.missing.length === 1 ? '1 piece' : `${stage.missing.length} pieces`} not on the mannequin yet
+                  </Text>
+                </PressableScale>
+              ) : null}
               {harmony !== null ? (
                 <View style={styles.harmony}>
                   <Text variant="micro" color={colors.creamDeep}>
@@ -199,6 +242,22 @@ export default function Builder() {
           </View>
 
           <View style={[styles.controls, { paddingBottom: insets.bottom + space.md }]}>
+            {onMannequin && stage.stackable ? (
+              <View style={styles.stackRow} accessibilityLabel="How the pants stack on the shoes">
+                {STACKINGS.map((s) => (
+                  <Chip
+                    key={s}
+                    size="sm"
+                    label={s[0]!.toUpperCase() + s.slice(1)}
+                    selected={stacking === s}
+                    onPress={() => {
+                      haptic.select();
+                      setStacking(s);
+                    }}
+                  />
+                ))}
+              </View>
+            ) : null}
             <View style={styles.pager}>
               <IconButton icon={ChevronLeft} variant="plain" disabled={index <= 0} onPress={() => goTo(index - 1)} accessibilityLabel="Previous look" />
               <Text variant="label" color={colors.textMuted}>
@@ -252,6 +311,7 @@ export default function Builder() {
         existing={editing}
         favorite={favorite}
         source={candidates.length ? 'shuffle' : 'manual'}
+        look={stage.stackable ? { stacking } : editing?.look}
         onClose={() => setSaving(false)}
       />
     </View>
@@ -313,6 +373,27 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(20,16,13,0.6)',
   },
   controls: { paddingHorizontal: gutter, paddingTop: space.md, gap: space.sm },
+  stackRow: { flexDirection: 'row', justifyContent: 'center', gap: space.xs },
+  viewToggle: {
+    position: 'absolute',
+    right: 12,
+    top: 12,
+    paddingHorizontal: 10,
+    height: 24,
+    borderRadius: radii.pill,
+    justifyContent: 'center',
+    backgroundColor: 'rgba(20,16,13,0.6)',
+  },
+  missingNote: {
+    position: 'absolute',
+    right: 12,
+    bottom: 12,
+    paddingHorizontal: 10,
+    height: 22,
+    borderRadius: radii.pill,
+    justifyContent: 'center',
+    backgroundColor: 'rgba(20,16,13,0.6)',
+  },
   pager: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   actions: { flexDirection: 'row', alignItems: 'center', gap: space.md },
 });

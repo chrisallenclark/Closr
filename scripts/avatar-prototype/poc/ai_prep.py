@@ -180,11 +180,20 @@ def color_lock(layer: Image.Image, photo: Image.Image, session) -> Image.Image:
 
     from wardrobe_poc import garment_mask
 
-    cut = np.array(remove(photo.resize((photo.width // 3, photo.height // 3)), session=session)).astype(np.float32)
+    # A fixed working size: phone uploads arrive already downscaled, and a fraction of a small photo
+    # can leave too few pixels for the garment mask.
+    small = photo.convert("RGB").copy()
+    small.thumbnail((900, 900))
+    cut = np.array(remove(small, session=session)).astype(np.float32)
     lay = np.array(layer).astype(np.float32)
     # Only the garment itself (hangers, neighbouring clothes and floor removed), never the whole photo.
-    want = cut[garment_mask(cut[..., 3])][:, :3].mean(axis=0)
-    have = lay[lay[..., 3] > 200][:, :3].mean(axis=0)
+    garment = cut[garment_mask(cut[..., 3])][:, :3]
+    solid = lay[lay[..., 3] > 200][:, :3]
+    if len(garment) < 200 or len(solid) < 200:
+        return layer  # nothing reliable to match against: leave the colours as rendered
+    want, have = garment.mean(axis=0), solid.mean(axis=0)
+    if not (np.isfinite(want).all() and np.isfinite(have).all()) or want.mean() < 1 or have.min() < 1:
+        return layer
     # Half-strength gain on chromaticity only: phone photos carry their room's white balance too, so
     # this removes the green-screen cast without copying a warm closet light onto the garment.
     gain = np.clip(np.sqrt((want / want.mean()) / (have / have.mean())), 0.85, 1.15)

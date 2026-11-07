@@ -17,13 +17,14 @@ interface NewOutfit {
   pieces: OutfitPieces;
   occasion?: Occasion;
   source: Outfit['source'];
+  look?: Outfit['look'];
 }
 
 interface OutfitsState {
   outfits: Outfit[];
   daily: DailyPick | null;
   addOutfit: (input: NewOutfit) => Outfit;
-  updateOutfit: (id: string, patch: Partial<Pick<Outfit, 'name' | 'pieces' | 'occasion'>>) => void;
+  updateOutfit: (id: string, patch: Partial<Pick<Outfit, 'name' | 'pieces' | 'occasion' | 'look'>>) => void;
   removeOutfit: (id: string) => void;
   toggleFavorite: (id: string) => void;
   markWorn: (id: string, at?: string) => void;

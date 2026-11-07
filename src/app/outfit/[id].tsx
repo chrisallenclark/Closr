@@ -2,7 +2,9 @@ import { router, useLocalSearchParams } from 'expo-router';
 import { Check, Heart, Layers, Pencil, Trash } from 'lucide-react-native';
 import { Alert, StyleSheet, useWindowDimensions, View } from 'react-native';
 
+import { MannequinStage } from '@/components/avatar/MannequinStage';
 import { OutfitBoard } from '@/components/outfits/OutfitBoard';
+import { useStageLayers } from '@/features/avatar/useStageLayers';
 import {
   Badge,
   Button,
@@ -25,6 +27,8 @@ import { resolvePieces, useItemMap } from '@/features/wardrobe/hooks';
 import { relativeDays } from '@/lib/time';
 import { colors, gutter, space } from '@/theme';
 
+const EMPTY = {};
+
 export default function OutfitDetail() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const outfit = useOutfits((s) => s.outfits.find((o) => o.id === id));
@@ -32,6 +36,7 @@ export default function OutfitDetail() {
   const toggleFavorite = useOutfits((s) => s.toggleFavorite);
   const itemMap = useItemMap();
   const { width } = useWindowDimensions();
+  const stage = useStageLayers(outfit?.pieces ?? EMPTY);
 
   if (!outfit) {
     return (
@@ -81,7 +86,21 @@ export default function OutfitDetail() {
       }
     >
       <Card tone="hero" style={styles.board}>
-        <OutfitBoard pieces={pieces} width={width - gutter * 2 - 24} gap={8} radius={14} />
+        {stage.available ? (
+          // Reopening a saved look draws the cached layers again: nothing is regenerated.
+          <View style={styles.stageFrame}>
+            <MannequinStage
+              assets={stage.assets!}
+              urls={stage.urls}
+              layers={stage.layers}
+              stacking={outfit.look?.stacking}
+              width={(width - gutter * 2 - 24) * 0.72}
+              height={(width - gutter * 2 - 24) * 1.25}
+            />
+          </View>
+        ) : (
+          <OutfitBoard pieces={pieces} width={width - gutter * 2 - 24} gap={8} radius={14} />
+        )}
         <View style={styles.meta}>
           <Text variant="caption" color={colors.creamDeep} style={styles.flex}>
             {items.length ? MOOD_LINES[paletteMood(items)] : ''}
@@ -151,5 +170,6 @@ const styles = StyleSheet.create({
   section: { marginTop: space.xxl, gap: space.md },
   piece: { flexDirection: 'row', alignItems: 'center', gap: space.md },
   thumb: { width: 56, height: 56 },
+  stageFrame: { alignSelf: 'center', borderRadius: 16, overflow: 'hidden' },
   delete: { marginTop: space.xxl },
 });

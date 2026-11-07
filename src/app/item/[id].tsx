@@ -1,5 +1,5 @@
 import { router, useLocalSearchParams } from 'expo-router';
-import { ArrowLeft, Check, Heart, Layers, Pencil, Shirt, Trash } from 'lucide-react-native';
+import { ArrowLeft, Check, ChevronRight, Heart, Layers, Pencil, Shirt, Trash } from 'lucide-react-native';
 import { useMemo } from 'react';
 import { Alert, ScrollView, StyleSheet, useWindowDimensions, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -14,17 +14,21 @@ import {
   Header,
   IconButton,
   ItemImage,
+  PressableScale,
   Screen,
   SectionHeader,
   Text,
 } from '@/components/ui';
 import { deleteItem } from '@/features/actions';
+import { prepStatus } from '@/features/avatar/status';
+import { canPrepare, useAvatar } from '@/features/avatar/store';
 import { pairScore } from '@/features/outfits/harmony';
 import { useOutfits } from '@/features/outfits/store';
 import { FORMALITY_LABELS, getColor, getSubcategoryLabel, SEASONS } from '@/features/wardrobe/catalog';
 import { useItem } from '@/features/wardrobe/hooks';
 import { useWardrobe } from '@/features/wardrobe/store';
 import { relativeDays } from '@/lib/time';
+import { avatarBackendConfigured } from '@/services/avatarApi';
 import { colors, gutter, radii, space } from '@/theme';
 
 export default function ItemDetail() {
@@ -34,6 +38,7 @@ export default function ItemDetail() {
   const toggleFavorite = useWardrobe((s) => s.toggleFavorite);
   const markWorn = useWardrobe((s) => s.markWorn);
   const outfitCount = useOutfits((s) => s.outfits.filter((o) => Object.values(o.pieces).includes(id)).length);
+  const prep = useAvatar((s) => (id ? s.byItem[id] : undefined));
   const insets = useSafeAreaInsets();
   const { width } = useWindowDimensions();
 
@@ -143,6 +148,10 @@ export default function ItemDetail() {
             />
           </View>
 
+          {canPrepare(item.category) && avatarBackendConfigured() ? (
+            <MannequinRow status={prepStatus(prep)} onPress={() => router.push(`/item/prepare/${item.id}`)} />
+          ) : null}
+
           {pairs.length ? (
             <View>
               <SectionHeader title="Pairs well with" subtitle="Based on colour and dress level" />
@@ -158,6 +167,22 @@ export default function ItemDetail() {
         </View>
       </ScrollView>
     </View>
+  );
+}
+
+function MannequinRow({ status, onPress }: { status: ReturnType<typeof prepStatus>; onPress: () => void }) {
+  const dot = { idle: colors.textFaint, working: colors.sand, action: colors.warning, done: colors.success, problem: colors.danger }[status.tone];
+  return (
+    <PressableScale onPress={onPress} style={styles.mannequin} accessibilityRole="button" accessibilityLabel={`Mannequin: ${status.label}`}>
+      <View style={[styles.dot, { backgroundColor: dot }]} />
+      <View style={styles.flex}>
+        <Text variant="bodyStrong">{status.label}</Text>
+        <Text variant="caption" color={colors.textMuted} numberOfLines={2}>
+          {status.detail}
+        </Text>
+      </View>
+      <ChevronRight size={18} color={colors.textMuted} />
+    </PressableScale>
   );
 }
 
@@ -210,4 +235,15 @@ const styles = StyleSheet.create({
   bleed: { marginHorizontal: -gutter },
   row: { paddingHorizontal: gutter, gap: space.sm },
   delete: { marginTop: space.lg },
+  mannequin: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: space.md,
+    padding: space.lg,
+    borderRadius: radii.lg,
+    backgroundColor: colors.surface,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: colors.border,
+  },
+  dot: { width: 8, height: 8, borderRadius: 4 },
 });

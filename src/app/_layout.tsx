@@ -10,6 +10,7 @@ import * as SplashScreen from 'expo-splash-screen';
 import { useEffect } from 'react';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 
+import { useAvatarSync } from '@/features/avatar/useAvatarSync';
 import { useHydrated } from '@/features/hydration';
 import { useProfile } from '@/features/profile/store';
 import { colors } from '@/theme';
@@ -40,6 +41,7 @@ export default function RootLayout() {
   const hydrated = useHydrated();
   const onboarded = useProfile((s) => s.profile !== null);
   const ready = (fontsLoaded || !!fontError) && hydrated;
+  useAvatarSync(hydrated);
 
   useEffect(() => {
     if (ready) void SplashScreen.hideAsync();
@@ -61,6 +63,7 @@ export default function RootLayout() {
             <Stack.Screen name="item/new" options={{ presentation: 'modal' }} />
             <Stack.Screen name="item/[id]" />
             <Stack.Screen name="item/edit/[id]" options={{ presentation: 'modal' }} />
+            <Stack.Screen name="item/prepare/[id]" />
             <Stack.Screen name="outfit/builder" />
             <Stack.Screen name="outfit/[id]" />
             <Stack.Screen name="match" options={{ presentation: 'modal' }} />

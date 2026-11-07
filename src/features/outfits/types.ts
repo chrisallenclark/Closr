@@ -1,3 +1,4 @@
+import type { Stacking } from '../avatar/types';
 import type { Category } from '../wardrobe/types';
 
 /** Slots map 1:1 to wardrobe categories. */
@@ -22,6 +23,10 @@ export const OCCASIONS = [
 
 export type Occasion = (typeof OCCASIONS)[number];
 
+export interface OutfitLook {
+  stacking?: Stacking;
+}
+
 export interface Outfit {
   id: string;
   name: string;
@@ -29,6 +34,8 @@ export interface Outfit {
   occasion?: Occasion;
   favorite: boolean;
   source: 'manual' | 'shuffle';
+  /** How the look is styled on the mannequin. Applied to cached layers; never regenerated. */
+  look?: OutfitLook;
   wearCount: number;
   lastWornAt?: string;
   createdAt: string;

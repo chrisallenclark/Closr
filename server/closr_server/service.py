@@ -15,6 +15,7 @@ import hashlib
 import io
 import json
 import secrets
+import time
 import uuid
 from pathlib import Path
 
@@ -53,6 +54,7 @@ class Service:
         self.cfg = cfg
         self.db = DB(cfg.db_path)
         self.storage = Storage(cfg.storage_dir)
+        self._secret = cfg.signing_secret()
         self.guard = CostGuard(self.db, cfg)
         self.client = make_client(cfg, self.guard)
         self._mannequin: pipeline.Mannequin | None = None
@@ -373,6 +375,29 @@ class Service:
             self.db.run(f"DELETE FROM {table} WHERE user_id = ? AND item_id = ?", user_id, item_id)
         self.db.run("UPDATE jobs SET state = 'failed', message = 'garment deleted' WHERE user_id = ? AND item_id = ? AND state IN ('waiting', 'preparing')",
                     user_id, item_id)
+
+    # -- signed file URLs ---------------------------------------------------------------------
+    # Like presigned bucket URLs: a URL grants one file until it expires, so images can be loaded
+    # (and cached on the device) without sending the device token. Keys embed the owner's id.
+
+    URL_TTL = 7 * 86400
+
+    def _sig(self, key: str, exp: int) -> str:
+        import hmac
+
+        return hmac.new(self._secret, f"{key}|{exp}".encode(), hashlib.sha256).hexdigest()[:32]
+
+    def sign(self, key: str) -> str:
+        exp = int(time.time()) + self.URL_TTL
+        exp -= exp % 3600  # stable for an hour, so repeated manifests yield identical URLs
+        return f"/v1/files/{key}?exp={exp}&sig={self._sig(key, exp)}"
+
+    def file_for_signature(self, key: str, exp: int, sig: str) -> Path:
+        import hmac
+
+        if exp < time.time() or not hmac.compare_digest(sig, self._sig(key, exp)) or not self.storage.exists(key):
+            raise NotFound("file")
+        return self.storage.path(key)
 
     def file_for(self, user_id: str, key: str) -> Path:
         if not self.storage.readable_by(key, user_id) or not self.storage.exists(key):

@@ -48,7 +48,8 @@
           "cameraPermission": "Closr uses your camera to photograph the clothing you own and pieces you're considering buying.",
           "microphonePermission": false
         }
-      ]
+      ],
+      "expo-secure-store"
     ],
     "experiments": {
       "typedRoutes": false

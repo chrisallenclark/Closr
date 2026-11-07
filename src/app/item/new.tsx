@@ -5,9 +5,11 @@ import { Alert, StyleSheet, useWindowDimensions, View } from 'react-native';
 import { emptyDraft, ItemForm } from '@/components/wardrobe/ItemForm';
 import { PhotoPicker } from '@/components/wardrobe/PhotoPicker';
 import { Button, haptic, Header, Screen, Text } from '@/components/ui';
+import { canPrepare, useAvatar } from '@/features/avatar/store';
 import { CATEGORY_IDS, getCategory, suggestName } from '@/features/wardrobe/catalog';
 import { useWardrobe } from '@/features/wardrobe/store';
 import type { Category, ClothingDraft, Formality } from '@/features/wardrobe/types';
+import { avatarBackendConfigured } from '@/services/avatarApi';
 import type { PickedPhoto } from '@/services/photos';
 import { colors, gutter, space } from '@/theme';
 
@@ -55,13 +57,18 @@ export default function NewItem() {
     if (!photo || !ready) return;
     setSaving(true);
     try {
-      await addItem({ ...draft, name: draft.name.trim() }, photo);
+      const item = await addItem({ ...draft, name: draft.name.trim() }, photo);
       haptic.success();
+      // Mannequin preparation starts right away and continues in the background.
+      const prepare = canPrepare(item.category) && avatarBackendConfigured();
+      if (prepare) useAvatar.getState().start(item);
       if (another) {
         setPhoto(null);
         setDraft({ ...emptyDraft(), category: draft.category, subcategory: draft.subcategory, formality: draft.formality });
         setNameEdited(false);
         setSavedCount((n) => n + 1);
+      } else if (prepare) {
+        router.replace(`/item/prepare/${item.id}`);
       } else {
         router.back();
       }
