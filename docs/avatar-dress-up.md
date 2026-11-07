@@ -38,25 +38,25 @@ shoe toes, top, open outer shirt). Swapping never calls an image model; a swap i
 
 ## Storage
 
-`asset_store.py` defines the layout; the same keys work in a cloud bucket:
+The backend (`server/`, see its README) keeps everything private, keyed by the owner's id:
 
 ```
-mannequins/<mannequin_id>/{plate.webp, landmarks.json, manifest.json}
-garments/<item_id>/item.json                    fit (value, confidence, source), default variant
-garments/<item_id>/source/<sha>.jpg             original photo, 1600 px
-garments/<item_id>/source/worn/<sha>.jpg        optional worn photos, deletable on their own
-garments/<item_id>/variants/<key>/master.webp   lossless layer (cropped) on the mannequin canvas
-garments/<item_id>/variants/<key>/display.webp  phone-size layer
-garments/<item_id>/variants/<key>/variant.json  placement, styling, checks, status, provenance
+shared/mannequins/<mannequin_id>/{canonical.png, plate.png, plate-display.webp, ref-trousers.png, landmarks.json}
+users/<uid>/items/<item_id>/source/<sha>.jpg                     original photo, 1600 px
+users/<uid>/items/<item_id>/source/worn/<sha>.jpg                optional worn photos, deletable on their own
+users/<uid>/items/<item_id>/variants/<key>/v<n>/master.webp      lossless layer (cropped) on the mannequin canvas
+users/<uid>/items/<item_id>/variants/<key>/v<n>/display.webp     phone-size layer (shoes also back/toe parts)
+users/<uid>/derived/<pants_variant>/<shoes_variant>/<stacking>.webp   hem stacked on a specific shoe
 ```
 
-Variant keys name styling, never outfits (`drape=natural`, `drape=crisp;closure=open`,
-`legs=follow`). Pairings that depend on two garments, such as a pants hem stacked against a specific
-shoe, are derived on the device at compose time and only cached.
+Records (photos, readings, jobs, variants with version and review status, the cost ledger, credit
+events) live in the database. Variant keys name styling, never outfits (`drape=natural`,
+`drape=crisp;closure=open`, `legs=follow`). Keys are immutable, so the app caches each file forever
+under its key; files are served only to their owner or through a short-lived signed URL.
 
-Production needs a small backend: the image model key cannot ship in the app, jobs need retries and
-cost limits, and assets must survive reinstalls and sync across devices. The app keeps its existing
-local-first model (`PhotoRef.remoteUrl` is already reserved for sync).
+The app keeps its local-first model: `ClothingItem.id` is the garment's id on the server too, so
+there is no second garment record. The device stores its prep state and the manifest of approved
+layers (`closr.avatar`), and the layers themselves sit in the image disk cache.
 
 ## Measured cost and size (prototype, November 2026)
 
@@ -72,13 +72,24 @@ local-first model (`PhotoRef.remoteUrl` is already reserved for sync).
 A 50-garment wardrobe at one default variant each: about **$15** to prepare and **~40 MB** to store,
 then nothing per outfit. Each requested extra variant is about $0.30 and ~0.5 MB.
 
-## Status
+## Status (vertical slice, November 2026)
 
-Ready to build on: the canonical mannequin and plate, landmark-aligned layers, leg following and
-shoe-aware stacking, drape-in-context for tops with fit-based defaults, the automatic checks, and the
-store layout.
+Works end to end against the local backend with the replay provider (recorded, already-paid model
+outputs; $0): add or open a garment → upload → read category and fit → visual fit confirmation only
+where unsure → queued job → prepared layer → review against the original photo → approve, request a
+correction (fit picks and a note), or replace the photo → Build Outfit draws approved layers on the
+mannequin; switching, shuffling, the stacking choice and reopening a saved look make no backend calls.
+Jobs persist on the server and the device, survive restarts and lost connections, and never duplicate.
 
-Still to develop: the backend job service and storage, the in-app upload → confirm → review flow,
-buttoned variants from busy closet photos (the model pulled in the background twice; ask for a flat
-photo instead), tucks, jackets and other outer layers beyond open shirts, a blue backdrop for light
-pants (residual green cast), and a re-preparation path when the canonical mannequin changes.
+Verified: backend unit and HTTP tests (`server/tests`), app unit tests (`tests/avatar.test.ts`),
+typecheck and lint, and a browser run of the app (Expo web) through the whole flow for a tee, cargos
+and sneakers. Not yet verified on an iPhone; no real model calls have been made through the backend.
+
+Mocked or interim: the replay model provider; anonymous device accounts (no Sign in with Apple, so a
+reinstall starts a new account); local disk and SQLite in place of a private bucket and Postgres; the
+worker runs inside the API process.
+
+Still to develop: worn photos in the app (the backend accepts them), extra styling variants on
+request (drape and closure; the backend supports them), outer layers beyond open shirts, one-pieces
+and accessories on the mannequin, tucks, buttoned variants from busy closet photos, a blue backdrop
+for light pants, and re-preparation when the canonical mannequin changes.
