@@ -39,3 +39,10 @@ yarn-error.*
 # generated native folders
 /ios
 /android
+
+# python
+__pycache__/
+.pytest_cache/
+*.pyc
+# backend runtime data (private wardrobe photos, db, replay fixtures) never belongs in git
+server/data/
