@@ -50,10 +50,25 @@ class Config:
     vision_model: str = _env("CLOSR_VISION_MODEL", "gemini-3.5-flash")
     mannequin_id: str = _env("CLOSR_MANNEQUIN_ID", "closr-v3")
     limits: Limits = field(default_factory=Limits)
+    # Production: DATABASE_URL=postgres://... ; development: a SQLite file in data_dir.
+    database_url: str = _env("DATABASE_URL", "")
+    # Production: a private S3-compatible bucket (Tigris, R2, S3); development: local disk.
+    s3_bucket: str = _env("CLOSR_S3_BUCKET", "")
+    s3_endpoint: str = _env("AWS_ENDPOINT_URL_S3", "")
+    # Sign in with Apple: the app's bundle id(s) an identity token must be issued for.
+    apple_audiences: tuple = tuple(a for a in _env("CLOSR_APPLE_AUDIENCES", "com.chrisallenclark.closr").split(",") if a)
+    # Anonymous device accounts are for development; production requires Sign in with Apple.
+    allow_anonymous: bool = _env("CLOSR_ALLOW_ANONYMOUS", "1") == "1"
+    # Where the worker keeps a local copy of the mannequin files when storage is a bucket.
+    cache_dir: Path = field(default_factory=lambda: Path(_env("CLOSR_CACHE_DIR", "/tmp/closr-cache")).resolve())
 
     @property
     def db_path(self) -> Path:
         return self.data_dir / "closr.db"
+
+    @property
+    def database(self) -> str:
+        return self.database_url or str(self.db_path)
 
     @property
     def storage_dir(self) -> Path:

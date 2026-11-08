@@ -10,6 +10,7 @@ from __future__ import annotations
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Callable
 
 import numpy as np
 from PIL import Image
@@ -67,7 +68,15 @@ class Ctx:
     client: ModelClient
     user_id: str
     job_id: str | None
-    fingerprint: str  # sha256 of the main garment photo
+    fingerprint: str  # perceptual hash of the main garment photo
+    # Keeps every paid render, so a layer can be re-keyed or re-checked later without paying again.
+    keep: Callable[[Image.Image, str], None] | None = None
+
+    def render(self, purpose: str, parts: list[dict]) -> Image.Image:
+        img = self.client.image(user_id=self.user_id, job_id=self.job_id, purpose=purpose, fingerprint=self.fingerprint, parts=parts)
+        if self.keep:
+            self.keep(img, purpose)
+        return img
 
 
 @dataclass
@@ -204,19 +213,62 @@ def _verify(photo: Image.Image, render: Image.Image, ctx: Ctx, purpose: str) -> 
 # --------------------------------------------------------------------------- per category
 
 
+HOLES_MAX = {"top": 0.005, "bottom": 0.005, "shoes": 0.05}  # good layers measure <= 0.0007 (shoes 0.0154)
+
+
+def enclosed_holes(layer: Image.Image) -> float:
+    """Share of the garment's outline that is transparent inside it: keying that ate into the fabric."""
+    from scipy import ndimage
+
+    m = np.array(layer.getchannel("A")) > 128
+    filled = ndimage.binary_fill_holes(m)
+    return float((filled & ~m).sum() / max(1, filled.sum()))
+
+
+def top_fit_note(observed: dict) -> str:
+    """The confirmed fit, in words the image model follows (width, length, sleeves, shoulders)."""
+    a = observed.get("attributes", {})
+    val = lambda k: str((a.get(k) or {}).get("value") or "").lower()
+    width = "boxy" if val("boxy") == "true" else val("fit")
+    words = {
+        "fitted": "Fitted: close to the body through the chest and waist.",
+        "slim": "Slim: close to the body through the chest and waist.",
+        "regular": "Regular fit: straight body with a little ease, not tight and not loose.",
+        "relaxed": "Relaxed fit: loose through the body with visible ease at the sides.",
+        "boxy": "Boxy fit: wide, straight, square body that stands away from the torso, with a wide hem.",
+        "oversized": "Oversized: much wider than the body, dropped shoulders, roomy sleeves.",
+    }
+    parts = [words.get(width, "")]
+    if val("length"):
+        parts.append({"cropped": "Cropped length, ending above the waistband.", "short": "Short length, ending at the waistband.",
+                      "standard": "Standard length, ending around the hips.", "long": "Long length, ending below the hips.",
+                      "longline": "Longline, ending at the upper thigh."}.get(val("length"), ""))
+    if val("shoulder_drop") == "dropped":
+        parts.append("Dropped shoulder seams that sit below the shoulder point.")
+    return " ".join(p for p in parts if p)
+
+
+def _check_holes(layer: Image.Image, category: str, checks: dict) -> None:
+    holes = enclosed_holes(layer)
+    checks["holes"] = round(holes, 4)
+    if holes > HOLES_MAX[category]:
+        raise Unusable("parts of the garment came out transparent")
+
+
 def prepare_top(photo: Image.Image, observed: dict, request: dict, mq: Mannequin, ctx: Ctx) -> Prepared:
     drape = request.get("drape") or default_drape(observed)
     closure = request.get("closure")
     style = "crisp_open" if closure == "open" else drape
-    fit_note = request.get("fitNote") or ""
+    fit_note = request.get("fitNote") or top_fit_note(observed)
     if request.get("correction"):
         fit_note += f" Correction requested by the owner: {request['correction']}."
     prompt = SHIRT_PROMPT_NO_ANCHOR.format(style=DRAPE[style], ref="", fit=fit_note.strip())
-    render = ctx.client.image(user_id=ctx.user_id, job_id=ctx.job_id, purpose=f"render:top:{style}", fingerprint=ctx.fingerprint,
-                              parts=[{"text": prompt}, jpeg_part(mq.ref_trousers), jpeg_part(photo)])
+    render = ctx.render(f"render:top:{style}", [{"text": prompt}, jpeg_part(mq.ref_trousers), jpeg_part(photo)])
     render, framing = _recover(render, mq.ref_trousers, "top")
-    layer = hue_guard(color_lock(clean_layer(key_shirt(render)), photo, mq.session), photo, mq.session)
     checks: dict = {"framing": framing}
+    keyed = clean_layer(key_shirt(render))
+    _check_holes(keyed, "top", checks)
+    layer = hue_guard(color_lock(keyed, photo, mq.session), photo, mq.session)
     if style != "crisp_open":
         # The reference trousers' waistband (top row and x-range) on the shared base image.
         waist = untucked_check(render, layer, 754, 395, 713)
@@ -236,30 +288,33 @@ def prepare_bottom(photo: Image.Image, observed: dict, request: dict, mq: Manneq
     prompt = build_prompt(spec, template=True)
     if request.get("correction"):
         prompt += f" Correction requested by the owner: {request['correction']}."
-    render = ctx.client.image(user_id=ctx.user_id, job_id=ctx.job_id, purpose="render:bottom", fingerprint=ctx.fingerprint,
-                              parts=[{"text": prompt}, jpeg_part(guide), jpeg_part(photo)])
+    render = ctx.render("render:bottom", [{"text": prompt}, jpeg_part(guide), jpeg_part(photo)])
     render, framing = _recover(render, mq.canonical, "bottom")
-    layer = hue_guard(color_lock(clean_layer(key_layer(render)), photo, mq.session), photo, mq.session)
+    keyed = clean_layer(key_layer(render))
+    holes: dict = {}
+    _check_holes(keyed, "bottom", holes)
+    layer = hue_guard(color_lock(keyed, photo, mq.session), photo, mq.session)
     layer, legs = styling.follow_legs(layer, mq.landmarks)
     verify, changed = _verify(photo, render, ctx, "verify:bottom")
     if changed:
         raise Unusable("details didn't match the photo: " + "; ".join(changed))
-    return Prepared(layer, {"legs": "follow", "legShape": spec.targets()["leg"]}, {"framing": framing, "legs": legs, "verify": verify})
+    return Prepared(layer, {"legs": "follow", "legShape": spec.targets()["leg"]}, {"framing": framing, "legs": legs, "verify": verify, **holes})
 
 
 def prepare_shoes(photo: Image.Image, observed: dict, request: dict, mq: Mannequin, ctx: Ctx) -> Prepared:
-    render = ctx.client.image(user_id=ctx.user_id, job_id=ctx.job_id, purpose="render:shoes", fingerprint=ctx.fingerprint,
-                              parts=[{"text": REAL_SHOES_PROMPT}, jpeg_part(mq.canonical), jpeg_part(photo)])
+    render = ctx.render("render:shoes", [{"text": REAL_SHOES_PROMPT}, jpeg_part(mq.canonical), jpeg_part(photo)])
     render, framing = _recover(render, mq.canonical, "bottom")
     layer = clean_layer(key_layer(render))
     a = np.array(layer.getchannel("A"))
     a[: mq.landmarks["ankle_y"] - 90] = 0  # only the feet
     layer.putalpha(Image.fromarray(a))
     layer = hue_guard(color_lock(layer, photo, mq.session), photo, mq.session)
+    checks: dict = {"framing": framing}
+    _check_holes(layer, "shoes", checks)
     feet = styling.shoe_meta(layer, mq.landmarks["cx"])
     if len(feet) != 2:
         raise Unusable("couldn't find both shoes on the feet")
-    return Prepared(layer, {"feet": feet}, {"framing": framing})
+    return Prepared(layer, {"feet": feet}, checks)
 
 
 PREPARERS = {"top": prepare_top, "outerwear": prepare_top, "bottom": prepare_bottom, "shoes": prepare_shoes}

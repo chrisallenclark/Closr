@@ -125,18 +125,25 @@ SHIRT_PROMPT = (
 )
 
 
-def key_shirt(render: Image.Image) -> Image.Image:
-    """Remove the green mannequin/backdrop and the blue reference trousers; keep the shirt."""
+def key_shirt(render: Image.Image, dark_keys: bool = True) -> Image.Image:
+    """Remove the green mannequin/backdrop and the blue reference trousers; keep the shirt.
+
+    `dark_keys` also drops dark pixels that lean blue or green (shadowed trousers and backdrop). Very
+    dark garments can lean the same way under the green light, so callers turn it off when it eats
+    holes into the fabric.
+    """
     a = np.array(render.convert("RGB")).astype(np.float32)
     r, g, b = a[..., 0], a[..., 1], a[..., 2]
     green = np.clip(((g - np.maximum(r, b)) - 18) / 40, 0, 1)
     blue = np.clip(((b - np.maximum(r, g)) - 22) / 40, 0, 1)
     # Shadowed blue fabric is dark and less saturated: also drop dark pixels that lean blue.
-    dark_blue = ((b > r + 8) & (b > g + 4) & (a.mean(axis=2) < 70)).astype(np.float32)
+    # Both dark rules also need a real colour difference: near-black fabric passes ratio tests on noise.
+    dark_blue = ((b > r + 20) & (b > g + 4) & (a.mean(axis=2) < 70)).astype(np.float32)
     # Shadowed green (the shirt's shadow on the mannequin, e.g. inside an open front) is dark and only weakly
     # green by difference, but still clearly green by ratio: drop it too.
-    dark_green = ((g > 1.3 * r) & (g > 1.25 * b) & (a.mean(axis=2) < 110)).astype(np.float32)
-    alpha = 1 - np.maximum.reduce([green, blue, dark_blue, dark_green])
+    dark_green = ((g > 1.3 * r) & (g > 1.25 * b) & (g > np.maximum(r, b) + 12) & (a.mean(axis=2) < 110)).astype(np.float32)
+    keys = [green, blue, dark_blue, dark_green] if dark_keys else [green, blue]
+    alpha = 1 - np.maximum.reduce(keys)
     alpha = np.array(Image.fromarray((alpha * 255).astype(np.uint8)).filter(ImageFilter.MinFilter(3)).filter(ImageFilter.GaussianBlur(0.7)))
     # Despill both key colours.
     a[..., 1] = np.minimum(g, np.maximum(r, b))

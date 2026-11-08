@@ -25,8 +25,8 @@ def photo_bytes(color=(120, 90, 60)) -> bytes:
 
 
 @pytest.fixture
-def svc(tmp_path, monkeypatch):
-    cfg = Config(data_dir=tmp_path, provider="replay", replay_dir=tmp_path / "replay",
+def svc(tmp_path, monkeypatch, backend):
+    cfg = Config(data_dir=tmp_path, provider="replay", replay_dir=tmp_path / "replay", **backend,
                  limits=Limits(starting_credits=3, jobs_per_hour=5, max_attempts=2, global_daily_usd=1.0, user_daily_usd=0.5))
     s = Service(cfg)
     monkeypatch.setattr(s, "mannequin", lambda: None)
@@ -142,9 +142,8 @@ def test_users_cannot_reach_each_others_data(svc, monkeypatch):
     job = svc.request_job(a, "tee", "top")
     svc.work_once()
     key = svc.get_job(a, job["id"])["variant"]["display"]
-    assert svc.file_for(a, key).exists()
-    with pytest.raises(NotFound):
-        svc.file_for(b, key)
+    assert svc.storage.exists(key) and svc.storage.readable_by(key, a)
+    assert not svc.storage.readable_by(key, b)
     with pytest.raises(NotFound):
         svc.get_job(b, job["id"])
     with pytest.raises(NotFound):
@@ -214,6 +213,8 @@ def test_end_to_end_over_http(tmp_path):
 
 
 def test_signed_file_urls_grant_one_file_until_they_expire(svc, monkeypatch):
+    if svc.cfg.s3_bucket:
+        pytest.skip("bucket files use the bucket's own presigned URLs")
     monkeypatch.setitem(pipeline.PREPARERS, "top", ok_preparer)
     uid = svc.create_session()["userId"]
     seed_analysis(svc, uid, "tee")
@@ -228,3 +229,26 @@ def test_signed_file_urls_grant_one_file_until_they_expire(svc, monkeypatch):
         svc.file_for_signature(other, int(q["exp"]), q["sig"])  # signature is bound to the key
     with pytest.raises(NotFound):
         svc.file_for_signature(key, int(time.time()) - 10, svc._sig(key, int(time.time()) - 10))  # expired
+
+
+def test_gemini_client_refuses_before_any_network_call_when_a_cap_is_reached(tmp_path, monkeypatch, backend):
+    from closr_server.models import GeminiClient
+
+    cfg = Config(data_dir=tmp_path, provider="gemini", **backend, limits=Limits(global_daily_usd=0.25, user_daily_usd=0.25))
+    monkeypatch.setenv("GEMINI_API_KEY", "test-key-not-used")
+    s = Service(cfg)
+    assert isinstance(s.client, GeminiClient)
+
+    def no_network(*_a, **_k):
+        raise AssertionError("the model was called despite the spending cap")
+
+    monkeypatch.setattr(s.client, "_post", no_network)
+    with pytest.raises(SpendLimit):
+        s.client.image(user_id="u1", job_id=None, purpose="render:top", fingerprint="x", parts=[])  # worst case $0.30 > $0.25
+    assert s.db.one("SELECT COUNT(*) AS n FROM model_calls")["n"] == 0  # nothing reserved, nothing spent
+
+
+def test_thinking_tokens_are_billed(svc):
+    call = svc.guard.reserve("u1", None, "render", "gemini-3-pro-image")
+    usd = svc.guard.settle(call, "gemini-3-pro-image", {"promptTokenCount": 0, "candidatesTokenCount": 1000, "thoughtsTokenCount": 500}, True)
+    assert abs(usd - 1500 * 120 / 1e6) < 1e-9

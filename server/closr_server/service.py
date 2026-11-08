@@ -24,9 +24,10 @@ from PIL import Image, ImageOps
 from . import pipeline
 from .config import Config
 from .costs import CostGuard, OutOfCredits, RateLimited, SpendLimit
-from .db import DB, dumps, loads, now
+from .auth import AuthError, verify_apple_token
+from .db import connect, dumps, loads, now
 from .models import ModelError, make_client, perceptual_hash
-from .storage import Storage
+from .storage import S3Storage, Storage
 
 CATEGORIES = ("top", "outerwear", "bottom", "shoes")
 LEASE_SECONDS = 600
@@ -41,6 +42,13 @@ class BadRequest(Exception):
     pass
 
 
+class Unauthorized(Exception):
+    pass
+
+
+SYNC_KINDS = ("item", "outfit", "profile")
+
+
 def _sha(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
@@ -52,8 +60,8 @@ def _id() -> str:
 class Service:
     def __init__(self, cfg: Config):
         self.cfg = cfg
-        self.db = DB(cfg.db_path)
-        self.storage = Storage(cfg.storage_dir)
+        self.db = connect(cfg.database)
+        self.storage = S3Storage(cfg.s3_bucket, cfg.s3_endpoint) if cfg.s3_bucket else Storage(cfg.storage_dir)
         self._secret = cfg.signing_secret()
         self.guard = CostGuard(self.db, cfg)
         self.client = make_client(cfg, self.guard)
@@ -67,7 +75,11 @@ class Service:
 
     def mannequin(self) -> pipeline.Mannequin:
         if self._mannequin is None:
-            self._mannequin = pipeline.Mannequin.load(self.storage.path(self.mannequin_prefix))
+            if isinstance(self.storage, S3Storage):  # the image pipeline reads files: keep a local copy
+                folder = self.storage.download_prefix(self.mannequin_prefix, self.cfg.cache_dir / self.mannequin_prefix)
+            else:
+                folder = self.storage.path(self.mannequin_prefix)
+            self._mannequin = pipeline.Mannequin.load(folder)
         return self._mannequin
 
     def mannequin_info(self) -> dict:
@@ -77,19 +89,110 @@ class Service:
 
     # -- sessions -------------------------------------------------------------------------------
 
-    def create_session(self) -> dict:
-        """An anonymous device account. The raw token is returned once; only its hash is stored."""
-        token = secrets.token_urlsafe(32)
+    def _new_user(self, apple_sub: str | None = None, email: str | None = None) -> str:
         user_id = _id()
-        self.db.run("INSERT INTO users (id, token_hash, credits, created_at) VALUES (?, ?, ?, ?)",
-                    user_id, _sha(token.encode()), self.cfg.limits.starting_credits, now())
+        self.db.run("INSERT INTO users (id, credits, apple_sub, email, created_at) VALUES (?, ?, ?, ?, ?)",
+                    user_id, self.cfg.limits.starting_credits, apple_sub, email, now())
         self.db.run("INSERT INTO credit_events (user_id, delta, reason, created_at) VALUES (?, ?, 'starting credits', ?)",
                     user_id, self.cfg.limits.starting_credits, now())
-        return {"userId": user_id, "token": token}
+        return user_id
+
+    def _new_session(self, user_id: str, kind: str) -> str:
+        """A bearer token. The raw value is returned once; only its hash is stored."""
+        token = secrets.token_urlsafe(32)
+        self.db.run("INSERT INTO sessions (token_hash, user_id, kind, created_at, last_used_at) VALUES (?, ?, ?, ?, ?)",
+                    _sha(token.encode()), user_id, kind, now(), now())
+        return token
+
+    def create_session(self) -> dict:
+        """An anonymous device account: development only (production requires Sign in with Apple)."""
+        if not self.cfg.allow_anonymous:
+            raise Unauthorized("sign in with Apple")
+        user_id = self._new_user()
+        return {"userId": user_id, "token": self._new_session(user_id, "device"), "signedIn": False}
 
     def user_for_token(self, token: str) -> str | None:
-        row = self.db.one("SELECT id FROM users WHERE token_hash = ?", _sha(token.encode()))
-        return row["id"] if row else None
+        row = self.db.one("SELECT s.user_id, s.kind, s.last_used_at FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.token_hash = ?",
+                          _sha(token.encode()))
+        if not row or (row["kind"] == "device" and not self.cfg.allow_anonymous):
+            return None
+        if now() - row["last_used_at"] > 3600:
+            self.db.run("UPDATE sessions SET last_used_at = ? WHERE token_hash = ?", now(), _sha(token.encode()))
+        return row["user_id"]
+
+    def sign_in_apple(self, identity_token: str, raw_nonce: str, current_user_id: str | None = None, keys=None) -> dict:
+        """Sign in (or up) with Apple. A signed-in device keeps its wardrobe: an anonymous account on
+        this device becomes the Apple account when that Apple ID is new to Closr."""
+        try:
+            ident = verify_apple_token(identity_token, raw_nonce, self.cfg.apple_audiences, keys)
+        except AuthError as err:
+            raise Unauthorized(str(err)) from err
+        with self.db.tx():
+            row = self.db.one("SELECT id FROM users WHERE apple_sub = ?", ident.sub)
+            if row:
+                user_id, created = row["id"], False
+            elif current_user_id and self.db.one("SELECT id FROM users WHERE id = ? AND apple_sub IS NULL", current_user_id):
+                self.db.run("UPDATE users SET apple_sub = ?, email = ? WHERE id = ?", ident.sub, ident.email, current_user_id)
+                user_id, created = current_user_id, False
+            else:
+                user_id, created = None, True
+        if created:
+            user_id = self._new_user(ident.sub, ident.email)
+        return {"userId": user_id, "token": self._new_session(user_id, "apple"), "signedIn": True, "newAccount": created}
+
+    def sign_out(self, token: str) -> None:
+        self.db.run("DELETE FROM sessions WHERE token_hash = ?", _sha(token.encode()))
+
+    def delete_account(self, user_id: str) -> int:
+        """Everything for this person: files first, then every record, then the account itself."""
+        n = self.storage.delete_prefix(Storage.user_prefix(user_id))
+        for table in ("records", "photos", "analyses", "jobs", "variants", "derived", "credit_events", "sessions"):
+            self.db.run(f"DELETE FROM {table} WHERE user_id = ?", user_id)
+        # The spend ledger is kept for accounting, without the person's id.
+        self.db.run("UPDATE model_calls SET user_id = NULL WHERE user_id = ?", user_id)
+        self.db.run("DELETE FROM users WHERE id = ?", user_id)
+        return n
+
+    def account(self, user_id: str) -> dict:
+        u = self.db.one("SELECT apple_sub, email FROM users WHERE id = ?", user_id)
+        return {"userId": user_id, "signedIn": bool(u and u["apple_sub"]), "email": u["email"] if u else None,
+                "usage": self.guard.usage(user_id)}
+
+    # -- wardrobe sync --------------------------------------------------------------------------
+
+    def sync(self, user_id: str, since: int, changes: list[dict]) -> dict:
+        """Last write wins per record. Returns every change after `since` (the device's cursor)."""
+        if len(changes) > 500:
+            raise BadRequest("too many changes at once")
+        deleted_items = []
+        with self.db.tx():
+            seq = int(self.db.one("SELECT COALESCE(MAX(seq), 0) AS s FROM records WHERE user_id = ?", user_id)["s"])
+            for c in changes:
+                kind, rid = c.get("kind"), str(c.get("id", ""))
+                if kind not in SYNC_KINDS or not rid or len(rid) > 100:
+                    raise BadRequest("bad record")
+                data = None if c.get("deleted") else dumps(c.get("data"))
+                if data and len(data) > 65536:
+                    raise BadRequest("record too large")
+                updated = float(c.get("updatedAt") or 0)
+                cur = self.db.one("SELECT updated_at FROM records WHERE user_id = ? AND kind = ? AND id = ?", user_id, kind, rid)
+                if cur and cur["updated_at"] >= updated:
+                    continue  # the server already has this version or a newer one
+                seq += 1
+                self.db.run(
+                    "INSERT INTO records (user_id, kind, id, data, updated_at, deleted, seq) VALUES (?, ?, ?, ?, ?, ?, ?) "
+                    "ON CONFLICT (user_id, kind, id) DO UPDATE SET data = excluded.data, updated_at = excluded.updated_at, "
+                    "deleted = excluded.deleted, seq = excluded.seq",
+                    user_id, kind, rid, data, updated, 1 if c.get("deleted") else 0, seq)
+                if kind == "item" and c.get("deleted"):
+                    deleted_items.append(rid)
+        for rid in deleted_items:
+            self.delete_item(user_id, rid)
+        rows = self.db.all("SELECT kind, id, data, updated_at, deleted, seq FROM records WHERE user_id = ? AND seq > ? ORDER BY seq",
+                           user_id, since)
+        return {"changes": [{"kind": r["kind"], "id": r["id"], "data": loads(r["data"]), "updatedAt": r["updated_at"],
+                             "deleted": bool(r["deleted"])} for r in rows],
+                "cursor": int(rows[-1]["seq"]) if rows else since}
 
     # -- photos ---------------------------------------------------------------------------------
 
@@ -115,15 +218,13 @@ class Service:
     def delete_worn_photos(self, user_id: str, item_id: str) -> int:
         rows = self.db.all("SELECT * FROM photos WHERE user_id = ? AND item_id = ? AND kind = 'worn'", user_id, item_id)
         for r in rows:
-            path = self.storage.path(r["storage_key"])
-            if path.exists():
-                path.unlink()
+            self.storage.delete(r["storage_key"])
         self.db.run("DELETE FROM photos WHERE user_id = ? AND item_id = ? AND kind = 'worn'", user_id, item_id)
         return len(rows)
 
     @staticmethod
     def _photo_out(r) -> dict:
-        return {"id": r["id"], "itemId": r["item_id"], "kind": r["kind"], "sha256": r["sha256"]}
+        return {"id": r["id"], "itemId": r["item_id"], "kind": r["kind"], "sha256": r["sha256"], "storageKey": r["storage_key"]}
 
     def _main_photo(self, user_id: str, item_id: str):
         row = self.db.one("SELECT * FROM photos WHERE user_id = ? AND item_id = ? AND kind = 'garment' ORDER BY created_at DESC LIMIT 1",
@@ -149,7 +250,8 @@ class Service:
             image = self.storage.get_image(photo["storage_key"]).convert("RGB")
             ctx = pipeline.Ctx(self.client, user_id, None, perceptual_hash(image))
             result = pipeline.analyze(image, category, ctx)
-        self.db.run("INSERT OR REPLACE INTO analyses (id, user_id, item_id, photo_set, result, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+        self.db.run("INSERT INTO analyses (id, user_id, item_id, photo_set, result, created_at) VALUES (?, ?, ?, ?, ?, ?) "
+                    "ON CONFLICT (user_id, item_id, photo_set) DO UPDATE SET result = excluded.result, created_at = excluded.created_at",
                     _id(), user_id, item_id, photo_set, dumps(result), now())
         return result
 
@@ -245,7 +347,11 @@ class Service:
         req = loads(job["request"])
         photo = self._main_photo(user_id, job["item_id"])
         image = self.storage.get_image(photo["storage_key"]).convert("RGB")
-        ctx = pipeline.Ctx(self.client, user_id, job_id, perceptual_hash(image))
+        def keep(render: Image.Image, purpose: str) -> None:
+            key = f"users/{user_id}/items/{job['item_id']}/renders/{job_id}/{purpose.replace(':', '-')}-{int(time.time())}.png"
+            self.storage.put_image(key, render)
+
+        ctx = pipeline.Ctx(self.client, user_id, job_id, perceptual_hash(image), keep)
 
         def finish(state: str, message: str | None = None, variant_id: str | None = None):
             self.db.run("UPDATE jobs SET state = ?, message = ?, variant_id = ?, cost_usd = ?, lease_until = NULL, updated_at = ? WHERE id = ?",
@@ -266,6 +372,37 @@ class Service:
             return finish("failed", f"Paused: {err}.")
         variant_id = self._store_variant(user_id, job, prepared)
         finish("ready_for_review", None, variant_id)
+
+    def reprocess(self, job_id: str) -> str:
+        """Prepare a job's garment again from its stored render(s): new keying or checks reach existing
+        garments without paying for another render. Only small vision checks call the model. The
+        result is a new version for review."""
+        job = dict(self.db.one("SELECT * FROM jobs WHERE id = ?", job_id))
+        user_id = job["user_id"]
+        stored = sorted(self.storage.keys(f"users/{user_id}/items/{job['item_id']}/renders/{job_id}/"))
+        if not stored:
+            raise NotFound("stored render")
+        latest = {}
+        for k in stored:  # the last render per purpose
+            latest[k.rsplit("/", 1)[1].rsplit("-", 1)[0]] = k
+        real = self.client
+
+        class StoredRenders:
+            def image(self, *, purpose, **_):
+                return self_storage.get_image(latest[purpose.replace(":", "-")]).convert("RGB")
+
+            def vision(self, **kw):
+                return real.vision(**kw)
+
+        self_storage = self.storage
+        photo = self._main_photo(user_id, job["item_id"])
+        image = self.storage.get_image(photo["storage_key"]).convert("RGB")
+        ctx = pipeline.Ctx(StoredRenders(), user_id, job_id, perceptual_hash(image))
+        req = loads(job["request"])
+        prepared = pipeline.PREPARERS[job["category"]](image, req["observed"], req, self.mannequin(), ctx)
+        vid = self._store_variant(user_id, job, prepared)
+        self.db.run("UPDATE jobs SET state = 'ready_for_review', variant_id = ?, message = NULL, updated_at = ? WHERE id = ?", vid, now(), job_id)
+        return vid
 
     def work_once(self) -> bool:
         job = self.claim()
@@ -349,7 +486,8 @@ class Service:
             c = im.crop(b)
             key = f"users/{user_id}/derived/{pants['id']}/{shoes['id']}/{lvl}.webp"
             self.storage.put_image(key, c.resize((max(1, round(c.width * DISPLAY_SCALE)), max(1, round(c.height * DISPLAY_SCALE))), Image.LANCZOS), quality=86)
-            self.db.run("INSERT OR REPLACE INTO derived (user_id, pants_variant_id, shoes_variant_id, stacking, display_key, placement) VALUES (?, ?, ?, ?, ?, ?)",
+            self.db.run("INSERT INTO derived (user_id, pants_variant_id, shoes_variant_id, stacking, display_key, placement) VALUES (?, ?, ?, ?, ?, ?) "
+                        "ON CONFLICT (pants_variant_id, shoes_variant_id, stacking) DO UPDATE SET display_key = excluded.display_key, placement = excluded.placement",
                         user_id, pants["id"], shoes["id"], lvl, key, dumps({"x": b[0], "y": b[1], "w": c.width, "h": c.height}))
 
     def wardrobe_assets(self, user_id: str) -> dict:
@@ -367,9 +505,7 @@ class Service:
         vids = [r["id"] for r in self.db.all("SELECT id FROM variants WHERE user_id = ? AND item_id = ?", user_id, item_id)]
         for vid in vids:
             for r in self.db.all("SELECT display_key FROM derived WHERE pants_variant_id = ? OR shoes_variant_id = ?", vid, vid):
-                path = self.storage.path(r["display_key"])
-                if path.exists():
-                    path.unlink()
+                self.storage.delete(r["display_key"])
             self.db.run("DELETE FROM derived WHERE pants_variant_id = ? OR shoes_variant_id = ?", vid, vid)
         for table in ("photos", "analyses", "variants"):
             self.db.run(f"DELETE FROM {table} WHERE user_id = ? AND item_id = ?", user_id, item_id)
@@ -388,6 +524,8 @@ class Service:
         return hmac.new(self._secret, f"{key}|{exp}".encode(), hashlib.sha256).hexdigest()[:32]
 
     def sign(self, key: str) -> str:
+        if isinstance(self.storage, S3Storage):
+            return self.storage.presign(key)  # straight from the private bucket, expiring
         exp = int(time.time()) + self.URL_TTL
         exp -= exp % 3600  # stable for an hour, so repeated manifests yield identical URLs
         return f"/v1/files/{key}?exp={exp}&sig={self._sig(key, exp)}"

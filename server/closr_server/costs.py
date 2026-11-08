@@ -61,16 +61,17 @@ class CostGuard:
                 raise SpendLimit("daily limit for this account reached")
             if user_id and self._spent(_month_start(t), user_id) + worst > lim.user_monthly_usd:
                 raise SpendLimit("monthly limit for this account reached")
-            cur = self.db.run(
-                "INSERT INTO model_calls (user_id, job_id, purpose, model, reserved_usd, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+            row = self.db.one(
+                "INSERT INTO model_calls (user_id, job_id, purpose, model, reserved_usd, created_at) VALUES (?, ?, ?, ?, ?, ?) RETURNING id",
                 user_id, job_id, purpose, model, worst, t,
             )
-            return int(cur.lastrowid)
+            return int(row["id"])
 
     def settle(self, call_id: int, model: str, usage: dict | None, ok: bool) -> float:
         rin, rout, _ = PRICES.get(model, (0, 0, 0))
         tin = int((usage or {}).get("promptTokenCount", 0))
-        tout = int((usage or {}).get("candidatesTokenCount", 0))
+        # Thinking tokens are billed as output too (Gemini 3 models think before answering).
+        tout = int((usage or {}).get("candidatesTokenCount", 0)) + int((usage or {}).get("thoughtsTokenCount", 0))
         usd = tin / 1e6 * rin + tout / 1e6 * rout
         self.db.run("UPDATE model_calls SET cost_usd = ?, ok = ?, in_tokens = ?, out_tokens = ? WHERE id = ?",
                     round(usd, 6), int(ok), tin, tout, call_id)
@@ -112,13 +113,13 @@ class CostGuard:
         t = now()
         row = self.db.one("SELECT credits FROM users WHERE id = ?", user_id)
         good = self.db.one(
-            "SELECT COUNT(*) AS n, COALESCE(SUM(cost_usd), 0) AS usd FROM jobs WHERE user_id = ? AND variant_id IS NOT NULL", user_id)
+            "SELECT COUNT(*) AS n FROM variants WHERE user_id = ? AND status IN ('approved', 'superseded')", user_id)
         spent = self._spent(0, user_id)
         return {
             "credits": row["credits"] if row else 0,
             "spent_today_usd": round(self._spent(_day_start(t), user_id), 4),
             "spent_month_usd": round(self._spent(_month_start(t), user_id), 4),
             "spent_total_usd": round(spent, 4),
-            "usable_assets": good["n"],
+            "usable_assets": good["n"],  # versions the person approved; rejected ones still count as spend
             "cost_per_usable_asset_usd": round(spent / good["n"], 4) if good["n"] else None,
         }

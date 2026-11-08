@@ -1,7 +1,9 @@
-"""SQLite schema and helpers. Plain SQL so it ports to Postgres when the server is deployed.
+"""Database schema and helpers: SQLite in development, Postgres in production, same SQL.
 
 Tables
-  users          device sessions (token stored hashed); credits balance
+  users          one per person: credits balance, Sign in with Apple identity (once linked)
+  sessions       bearer tokens (stored hashed): anonymous device sessions or Apple sign-ins
+  records        the synced wardrobe (items, outfits, profile) as JSON, last write wins
   photos         uploaded source / worn photos, content-addressed per user
   analyses       one fit reading per (user, item, photo set), cached
   jobs           preparation jobs; `idem_key` is unique, so the same request never runs twice
@@ -21,10 +23,30 @@ from pathlib import Path
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS users (
   id TEXT PRIMARY KEY,
-  token_hash TEXT NOT NULL UNIQUE,
   credits INTEGER NOT NULL,
-  created_at REAL NOT NULL
+  apple_sub TEXT UNIQUE,
+  email TEXT,
+  created_at {real} NOT NULL
 );
+CREATE TABLE IF NOT EXISTS sessions (
+  token_hash TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL,
+  kind TEXT NOT NULL CHECK (kind IN ('device', 'apple')),
+  created_at {real} NOT NULL,
+  last_used_at {real} NOT NULL
+);
+CREATE INDEX IF NOT EXISTS sessions_user ON sessions (user_id);
+CREATE TABLE IF NOT EXISTS records (
+  user_id TEXT NOT NULL,
+  kind TEXT NOT NULL,
+  id TEXT NOT NULL,
+  data TEXT,
+  updated_at {real} NOT NULL,
+  deleted INTEGER NOT NULL DEFAULT 0,
+  seq BIGINT NOT NULL,
+  PRIMARY KEY (user_id, kind, id)
+);
+CREATE INDEX IF NOT EXISTS records_seq ON records (user_id, seq);
 CREATE TABLE IF NOT EXISTS photos (
   id TEXT PRIMARY KEY,
   user_id TEXT NOT NULL,
@@ -32,7 +54,7 @@ CREATE TABLE IF NOT EXISTS photos (
   kind TEXT NOT NULL CHECK (kind IN ('garment', 'worn')),
   sha256 TEXT NOT NULL,
   storage_key TEXT NOT NULL,
-  created_at REAL NOT NULL,
+  created_at {real} NOT NULL,
   UNIQUE (user_id, item_id, sha256)
 );
 CREATE TABLE IF NOT EXISTS analyses (
@@ -41,7 +63,7 @@ CREATE TABLE IF NOT EXISTS analyses (
   item_id TEXT NOT NULL,
   photo_set TEXT NOT NULL,
   result TEXT NOT NULL,
-  created_at REAL NOT NULL,
+  created_at {real} NOT NULL,
   UNIQUE (user_id, item_id, photo_set)
 );
 CREATE TABLE IF NOT EXISTS jobs (
@@ -56,10 +78,10 @@ CREATE TABLE IF NOT EXISTS jobs (
   attempts INTEGER NOT NULL DEFAULT 0,
   message TEXT,
   variant_id TEXT,
-  cost_usd REAL NOT NULL DEFAULT 0,
-  lease_until REAL,
-  created_at REAL NOT NULL,
-  updated_at REAL NOT NULL
+  cost_usd {real} NOT NULL DEFAULT 0,
+  lease_until {real},
+  created_at {real} NOT NULL,
+  updated_at {real} NOT NULL
 );
 CREATE INDEX IF NOT EXISTS jobs_queue ON jobs (state, created_at);
 CREATE INDEX IF NOT EXISTS jobs_user ON jobs (user_id, updated_at);
@@ -78,8 +100,8 @@ CREATE TABLE IF NOT EXISTS variants (
   styling TEXT NOT NULL,
   checks TEXT NOT NULL,
   job_id TEXT,
-  created_at REAL NOT NULL,
-  reviewed_at REAL
+  created_at {real} NOT NULL,
+  reviewed_at {real}
 );
 CREATE INDEX IF NOT EXISTS variants_item ON variants (user_id, item_id, variant_key, version);
 CREATE TABLE IF NOT EXISTS derived (
@@ -92,32 +114,41 @@ CREATE TABLE IF NOT EXISTS derived (
   PRIMARY KEY (pants_variant_id, shoes_variant_id, stacking)
 );
 CREATE TABLE IF NOT EXISTS model_calls (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  id {autoid},
   user_id TEXT,
   job_id TEXT,
   purpose TEXT NOT NULL,
   model TEXT NOT NULL,
-  reserved_usd REAL NOT NULL,
-  cost_usd REAL,
+  reserved_usd {real} NOT NULL,
+  cost_usd {real},
   ok INTEGER,
   in_tokens INTEGER,
   out_tokens INTEGER,
-  created_at REAL NOT NULL
+  created_at {real} NOT NULL
 );
 CREATE INDEX IF NOT EXISTS calls_user_time ON model_calls (user_id, created_at);
+CREATE INDEX IF NOT EXISTS calls_time ON model_calls (created_at);
 CREATE TABLE IF NOT EXISTS credit_events (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  id {autoid},
   user_id TEXT NOT NULL,
   job_id TEXT,
   delta INTEGER NOT NULL,
   reason TEXT NOT NULL,
-  created_at REAL NOT NULL
+  created_at {real} NOT NULL
 );
 """
 
 
+def connect(target: str | Path) -> "DB":
+    """`postgres://...` (production) or a SQLite file path (development and tests)."""
+    t = str(target)
+    return PgDB(t) if t.startswith(("postgres://", "postgresql://")) else DB(Path(t))
+
+
 class DB:
-    """A thread-safe SQLite connection (the API and the worker share one process in development)."""
+    """SQLite. One shared connection, serialised by a lock (the API and worker share a process)."""
+
+    dialect = "sqlite"
 
     def __init__(self, path: Path):
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -125,24 +156,80 @@ class DB:
         self.conn.row_factory = sqlite3.Row
         self.conn.execute("PRAGMA journal_mode=WAL")
         self.conn.execute("PRAGMA foreign_keys=ON")
-        self.conn.executescript(SCHEMA)
+        self._migrate_v1()
+        self.conn.executescript(SCHEMA.format(real="REAL", autoid="INTEGER PRIMARY KEY AUTOINCREMENT"))
         self.lock = threading.RLock()
 
-    def one(self, sql: str, *args) -> sqlite3.Row | None:
-        with self.lock:
-            return self.conn.execute(sql, args).fetchone()
+    def _migrate_v1(self) -> None:
+        """Development databases from before Sign in with Apple kept one device token per user."""
+        cols = [r[1] for r in self.conn.execute("PRAGMA table_info(users)")]
+        if "token_hash" not in cols:
+            return
+        self.conn.execute("BEGIN")
+        self.conn.execute("CREATE TABLE IF NOT EXISTS sessions (token_hash TEXT PRIMARY KEY, user_id TEXT NOT NULL, kind TEXT NOT NULL, created_at REAL NOT NULL, last_used_at REAL NOT NULL)")
+        self.conn.execute("INSERT OR IGNORE INTO sessions SELECT token_hash, id, 'device', created_at, created_at FROM users")
+        self.conn.execute("CREATE TABLE users_v2 (id TEXT PRIMARY KEY, credits INTEGER NOT NULL, apple_sub TEXT UNIQUE, email TEXT, created_at REAL NOT NULL)")
+        self.conn.execute("INSERT INTO users_v2 (id, credits, created_at) SELECT id, credits, created_at FROM users")
+        self.conn.execute("DROP TABLE users")
+        self.conn.execute("ALTER TABLE users_v2 RENAME TO users")
+        self.conn.execute("COMMIT")
 
-    def all(self, sql: str, *args) -> list[sqlite3.Row]:
-        with self.lock:
-            return self.conn.execute(sql, args).fetchall()
+    def _sql(self, sql: str) -> str:
+        return sql
 
-    def run(self, sql: str, *args) -> sqlite3.Cursor:
+    def one(self, sql: str, *args):
         with self.lock:
-            return self.conn.execute(sql, args)
+            return self.conn.execute(self._sql(sql), args).fetchone()
+
+    def all(self, sql: str, *args) -> list:
+        with self.lock:
+            return self.conn.execute(self._sql(sql), args).fetchall()
+
+    def run(self, sql: str, *args):
+        with self.lock:
+            return self.conn.execute(self._sql(sql), args)
 
     def tx(self):
-        """`with db.tx():` runs the block in one IMMEDIATE transaction (serialises writers)."""
+        """`with db.tx():` runs the block in one transaction that serialises writers, across processes too."""
         return _Tx(self)
+
+    def _begin(self):
+        self.conn.execute("BEGIN IMMEDIATE")
+
+    def _end(self, ok: bool):
+        self.conn.execute("COMMIT" if ok else "ROLLBACK")
+
+
+class PgDB(DB):
+    """Postgres, for production: the API and the worker run as separate processes on one database."""
+
+    dialect = "postgres"
+
+    def __init__(self, url: str):
+        import psycopg
+        from psycopg.rows import dict_row
+
+        self.conn = psycopg.connect(url, autocommit=True, row_factory=dict_row)
+        self.lock = threading.RLock()
+        with self.lock:
+            self.conn.execute("SELECT pg_advisory_lock(7101)")  # one process migrates at a time
+            try:
+                for stmt in SCHEMA.format(real="DOUBLE PRECISION", autoid="BIGSERIAL PRIMARY KEY").split(";"):
+                    if stmt.strip():
+                        self.conn.execute(stmt)
+            finally:
+                self.conn.execute("SELECT pg_advisory_unlock(7101)")
+
+    def _sql(self, sql: str) -> str:
+        return sql.replace("?", "%s")
+
+    def _begin(self):
+        self.conn.execute("BEGIN")
+        # Same guarantee as SQLite's IMMEDIATE: spending checks and credit changes never interleave.
+        self.conn.execute("SELECT pg_advisory_xact_lock(7102)")
+
+    def _end(self, ok: bool):
+        self.conn.execute("COMMIT" if ok else "ROLLBACK")
 
 
 class _Tx:
@@ -151,12 +238,12 @@ class _Tx:
 
     def __enter__(self):
         self.db.lock.acquire()
-        self.db.conn.execute("BEGIN IMMEDIATE")
+        self.db._begin()
         return self.db
 
     def __exit__(self, exc_type, *_):
         try:
-            self.db.conn.execute("ROLLBACK" if exc_type else "COMMIT")
+            self.db._end(exc_type is None)
         finally:
             self.db.lock.release()
 

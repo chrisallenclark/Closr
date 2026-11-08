@@ -11,11 +11,11 @@ import threading
 import time
 
 from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, UploadFile
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, RedirectResponse
 from pydantic import BaseModel
 
 from .config import Config
-from .service import BadRequest, NotFound, OutOfCredits, RateLimited, Service, SpendLimit
+from .service import BadRequest, NotFound, OutOfCredits, RateLimited, Service, SpendLimit, Unauthorized
 
 MAX_UPLOAD = 15 * 1024 * 1024
 
@@ -35,6 +35,16 @@ class JobIn(BaseModel):
 
 class ReviewIn(BaseModel):
     approve: bool
+
+
+class AppleIn(BaseModel):
+    identityToken: str
+    nonce: str
+
+
+class SyncIn(BaseModel):
+    since: int = 0
+    changes: list[dict] = []
 
 
 def create_app(cfg: Config | None = None, run_worker: bool = True) -> FastAPI:
@@ -82,16 +92,44 @@ def create_app(cfg: Config | None = None, run_worker: bool = True) -> FastAPI:
             raise HTTPException(402, str(err)) from err
         except RateLimited as err:
             raise HTTPException(429, str(err)) from err
+        except Unauthorized as err:
+            raise HTTPException(401, str(err)) from err
         except SpendLimit as err:
             raise HTTPException(503, f"Garment preparation is paused: {err}") from err
 
+    @app.get("/healthz")
+    def healthz():
+        svc.db.one("SELECT 1 AS ok")
+        return {"ok": True}
+
     @app.post("/v1/session")
     def session():
-        return svc.create_session()
+        """Anonymous device account (development builds only)."""
+        return guarded(svc.create_session)
+
+    @app.post("/v1/auth/apple")
+    def apple(body: AppleIn, authorization: str = Header(default="")):
+        token = authorization.removeprefix("Bearer ").strip()
+        current = svc.user_for_token(token) if token else None
+        return guarded(svc.sign_in_apple, body.identityToken, body.nonce, current)
+
+    @app.post("/v1/auth/signout")
+    def signout(authorization: str = Header(default="")):
+        svc.sign_out(authorization.removeprefix("Bearer ").strip())
+        return {"ok": True}
 
     @app.get("/v1/me")
     def me(uid: str = Depends(user)):
-        return {"userId": uid, "usage": svc.guard.usage(uid)}
+        return svc.account(uid)
+
+    @app.delete("/v1/me")
+    def delete_me(uid: str = Depends(user)):
+        """Deletes the account and every photo, asset and record it owns."""
+        return {"deleted": True, "files": svc.delete_account(uid)}
+
+    @app.post("/v1/sync")
+    def sync(body: SyncIn, uid: str = Depends(user)):
+        return with_urls(guarded(svc.sync, uid, body.since, body.changes))
 
     @app.post("/v1/items/{item_id}/photos")
     async def upload(item_id: str, kind: str = Form("garment"), file: UploadFile = File(...), uid: str = Depends(user)):
@@ -138,11 +176,16 @@ def create_app(cfg: Config | None = None, run_worker: bool = True) -> FastAPI:
         if sig:
             path = guarded(svc.file_for_signature, key, exp, sig)
         else:
-            path = guarded(svc.file_for, user(authorization), key)
+            uid = user(authorization)
+            if not svc.storage.readable_by(key, uid):
+                raise HTTPException(404, "file not found")
+            if hasattr(svc.storage, "presign"):
+                return RedirectResponse(svc.sign(key), status_code=307)
+            path = guarded(svc.file_for, uid, key)
         # Content-addressed or versioned keys never change, so the app may cache them forever.
         return FileResponse(path, headers={"Cache-Control": "private, max-age=31536000, immutable"})
 
-    if run_worker:
+    if run_worker and os.environ.get("CLOSR_RUN_WORKER", "1") == "1":
         def loop():
             while True:
                 try:

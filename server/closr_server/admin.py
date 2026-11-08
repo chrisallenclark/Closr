@@ -7,6 +7,8 @@
   python -m closr_server.admin restore-backup --from <dir>
       rebuilds the mannequin and replay fixtures from the private backup (files named as in
       closr-backup-index.json, plus closr-replay-bundle.json)
+  python -m closr_server.admin reprocess --job <id>
+      prepares a job again from its stored render (no new render is paid for)
   python -m closr_server.admin spend
       prints spend per model, per user, and cost per usable asset from the ledger
 """
@@ -22,7 +24,7 @@ from pathlib import Path
 from PIL import Image
 
 from .config import Config
-from .db import DB
+from .db import connect
 
 
 def install_mannequin(cfg: Config, src: Path) -> None:
@@ -80,10 +82,10 @@ def restore_backup(cfg: Config, src: Path) -> None:
 
 
 def spend(cfg: Config) -> None:
-    db = DB(cfg.db_path)
+    db = connect(cfg.database)
     for r in db.all("SELECT model, COUNT(*) n, ROUND(SUM(COALESCE(cost_usd, reserved_usd)), 4) usd FROM model_calls GROUP BY model"):
         print(dict(r))
-    for r in db.all("SELECT user_id, COUNT(*) jobs, SUM(variant_id IS NOT NULL) usable, ROUND(SUM(cost_usd), 4) usd FROM jobs GROUP BY user_id"):
+    for r in db.all("SELECT user_id, COUNT(*) jobs, SUM(CASE WHEN variant_id IS NOT NULL THEN 1 ELSE 0 END) usable, ROUND(SUM(cost_usd), 4) usd FROM jobs GROUP BY user_id"):
         d = dict(r)
         d["per_usable"] = round(d["usd"] / d["usable"], 4) if d["usable"] else None
         print(d)
@@ -98,6 +100,8 @@ def main() -> int:
     r.add_argument("--spec", required=True, type=Path)
     rb = sub.add_parser("restore-backup")
     rb.add_argument("--from", dest="src", required=True, type=Path)
+    rp = sub.add_parser("reprocess")
+    rp.add_argument("--job", required=True)
     sub.add_parser("spend")
     args = p.parse_args()
     cfg = Config()
@@ -105,6 +109,10 @@ def main() -> int:
         install_mannequin(cfg, args.src)
     elif args.cmd == "build-replay":
         build_replay(cfg, args.spec)
+    elif args.cmd == "reprocess":
+        from .service import Service
+
+        print("new version for review:", Service(cfg).reprocess(args.job))
     elif args.cmd == "restore-backup":
         restore_backup(cfg, args.src)
     else:
