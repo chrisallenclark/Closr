@@ -10,7 +10,9 @@ import * as SplashScreen from 'expo-splash-screen';
 import { useEffect } from 'react';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 
+import { useAccount } from '@/features/account/store';
 import { useAvatarSync } from '@/features/avatar/useAvatarSync';
+import { useWardrobeSync } from '@/features/sync/engine';
 import { useHydrated } from '@/features/hydration';
 import { useProfile } from '@/features/profile/store';
 import { colors } from '@/theme';
@@ -42,6 +44,10 @@ export default function RootLayout() {
   const onboarded = useProfile((s) => s.profile !== null);
   const ready = (fontsLoaded || !!fontError) && hydrated;
   useAvatarSync(hydrated);
+  useWardrobeSync(hydrated);
+  useEffect(() => {
+    if (hydrated) void useAccount.getState().refresh();
+  }, [hydrated]);
 
   useEffect(() => {
     if (ready) void SplashScreen.hideAsync();

@@ -1,7 +1,7 @@
 import Constants from 'expo-constants';
 import { router } from 'expo-router';
-import { ChevronRight, Lock, ScanFace, Trash } from 'lucide-react-native';
-import { useMemo } from 'react';
+import { ChevronRight, Cloud, Lock, LogOut, ScanFace, Trash } from 'lucide-react-native';
+import { useMemo, useSyncExternalStore } from 'react';
 import { Alert, StyleSheet, View } from 'react-native';
 
 import {
@@ -17,7 +17,12 @@ import {
   TAB_BAR_CLEARANCE,
   Text,
 } from '@/components/ui';
+import { SignInWithApple } from '@/components/account/SignInWithApple';
+import { useAccount } from '@/features/account/store';
+import { diagnosticsEnabled, layerLoadSummary, subscribeLayerLoads } from '@/features/avatar/perf';
 import { eraseAllData } from '@/features/actions';
+import { useSync } from '@/features/sync/store';
+import { avatarBackendConfigured } from '@/services/avatarApi';
 import { useOutfits } from '@/features/outfits/store';
 import { useProfile } from '@/features/profile/store';
 import { PALETTES } from '@/features/profile/types';
@@ -30,6 +35,11 @@ export default function Profile() {
   const profile = useProfile((s) => s.profile);
   const items = useWardrobe((s) => s.items);
   const outfits = useOutfits((s) => s.outfits);
+  const account = useAccount();
+  const lastSyncAt = useSync((s) => s.lastSyncAt);
+  const syncError = useSync((s) => s.error);
+  const cloud = avatarBackendConfigured();
+  const perf = useSyncExternalStore(subscribeLayerLoads, layerLoadSummary, layerLoadSummary);
 
   const counts = countByCategory(items);
   const max = Math.max(1, ...Object.values(counts));
@@ -49,9 +59,33 @@ export default function Profile() {
   if (!profile) return null;
 
   const confirmErase = () =>
-    Alert.alert('Erase everything?', 'This deletes your wardrobe, photos, outfits and profile from this iPhone. It cannot be undone.', [
+    account.signedIn
+      ? Alert.alert(
+          'Delete your account?',
+          'This permanently deletes your Closr account, and your wardrobe, photos, prepared garments and outfits, from this iPhone and from Closr\'s servers. It cannot be undone.',
+          [
+            { text: 'Cancel', style: 'cancel' },
+            {
+              text: 'Delete account',
+              style: 'destructive',
+              onPress: () =>
+                void eraseAllData().catch(() => Alert.alert("Couldn't delete your account", 'Check your connection and try again.')),
+            },
+          ],
+        )
+      : Alert.alert('Erase everything?', 'This deletes your wardrobe, photos, outfits and profile from this iPhone. It cannot be undone.', [
+          { text: 'Cancel', style: 'cancel' },
+          { text: 'Erase', style: 'destructive', onPress: () => void eraseAllData() },
+        ]);
+
+  const confirmSignOut = () =>
+    Alert.alert('Sign out?', 'Your wardrobe stays in your account. It is removed from this iPhone until you sign in again.', [
       { text: 'Cancel', style: 'cancel' },
-      { text: 'Erase', style: 'destructive', onPress: () => void eraseAllData() },
+      {
+        text: 'Sign out',
+        style: 'destructive',
+        onPress: () => void account.signOut().catch(() => Alert.alert("Couldn't sign out", 'Check your connection and try again.')),
+      },
     ]);
 
   return (
@@ -154,6 +188,30 @@ export default function Profile() {
         </View>
       ) : null}
 
+      {cloud ? (
+        <View style={styles.section}>
+          <SectionHeader title="Account" />
+          <Card style={styles.card}>
+            <View style={styles.rowCardInner}>
+              <Cloud size={22} color={colors.cream} strokeWidth={1.5} />
+              <View style={styles.flex}>
+                <Text variant="bodyStrong">{account.signedIn ? 'Backed up to your account' : 'Back up your wardrobe'}</Text>
+                <Text variant="caption" color={colors.textMuted}>
+                  {account.signedIn
+                    ? `${account.email ?? 'Signed in with Apple'}${syncError ? ` · ${syncError}` : lastSyncAt ? ` · synced ${new Date(lastSyncAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}` : ''}`
+                    : 'Sign in to keep your clothes, outfits and mannequin on every iPhone, and to prepare garments for the mannequin.'}
+                </Text>
+              </View>
+            </View>
+            {account.signedIn ? (
+              <Button label="Sign out" icon={LogOut} variant="secondary" onPress={confirmSignOut} />
+            ) : (
+              <SignInWithApple />
+            )}
+          </Card>
+        </View>
+      ) : null}
+
       <View style={styles.section}>
         <SectionHeader title="Labs" />
         <Card onPress={() => router.push('/try-on')} style={[styles.card, styles.rowCard]}>
@@ -172,14 +230,22 @@ export default function Profile() {
         <View style={styles.privacy}>
           <Lock size={14} color={colors.textMuted} />
           <Text variant="caption" color={colors.textMuted} style={styles.flex}>
-            Your wardrobe and photos are stored privately on this iPhone. Account backup and sync will
-            arrive in a later version.
+            {account.signedIn
+              ? 'Your wardrobe and photos are stored on this iPhone and backed up privately to your account. Only you can see them.'
+              : 'Your wardrobe and photos are stored privately on this iPhone.'}
           </Text>
         </View>
-        <Button label="Erase all data" icon={Trash} variant="danger" onPress={confirmErase} />
+        <Button label={account.signedIn ? 'Delete account' : 'Erase all data'} icon={Trash} variant="danger" onPress={confirmErase} />
         <Text variant="micro" color={colors.textFaint} align="center" style={styles.version}>
           Closr {Constants.expoConfig?.version ?? ''}
         </Text>
+        {diagnosticsEnabled ? (
+          <Text variant="micro" color={colors.textFaint} align="center">
+            {perf
+              ? `Mannequin layers: ${perf.count} loads · median ${perf.medianMs} ms · p90 ${perf.p90Ms} ms · ${Math.round(perf.cachedShare * 100)}% from cache`
+              : 'Mannequin layers: open Build Outfit to measure'}
+          </Text>
+        ) : null}
       </View>
     </Screen>
   );
@@ -208,6 +274,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   card: { padding: space.lg, gap: space.md },
+  rowCardInner: { flexDirection: 'row', alignItems: 'center', gap: space.md },
   cardHead: { flexDirection: 'row', alignItems: 'center', gap: 4 },
   dots: { flexDirection: 'row', gap: 6 },
   dot: { width: 18, height: 18, borderRadius: 9, borderWidth: StyleSheet.hairlineWidth, borderColor: colors.borderStrong },

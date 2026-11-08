@@ -72,24 +72,39 @@ layers (`closr.avatar`), and the layers themselves sit in the image disk cache.
 A 50-garment wardrobe at one default variant each: about **$15** to prepare and **~40 MB** to store,
 then nothing per outfit. Each requested extra variant is about $0.30 and ~0.5 MB.
 
-## Status (vertical slice, November 2026)
+## Status (November 2026)
 
-Works end to end against the local backend with the replay provider (recorded, already-paid model
-outputs; $0): add or open a garment → upload → read category and fit → visual fit confirmation only
-where unsure → queued job → prepared layer → review against the original photo → approve, request a
-correction (fit picks and a note), or replace the photo → Build Outfit draws approved layers on the
-mannequin; switching, shuffling, the stacking choice and reopening a saved look make no backend calls.
-Jobs persist on the server and the device, survive restarts and lost connections, and never duplicate.
+**Real Gemini test** (approved budget $3, spent **$1.16**, 14 model calls; ledger in the private
+backup). Through the same API the app uses, with photos downscaled exactly like the app does:
+- tee: the printed Aetherium tee was refused before any render (folds hide part of the print) and
+  the app asks for a better photo ($0.008). The flat-laid black tee rendered, but with keying holes
+  and too fitted. That led to two fixes: an enclosed-holes check on every layer, and dark-fabric
+  keying. Corrected to Boxy, it came out right.
+- pants: black carpenter jeans. The first render added double-knee panels; a correction (Baggy +
+  "no knee panels") fixed it.
+- shoes: New Balance 550, right first time.
+- spending limit: with the real client and the cap reached, a reading returned 503 and a queued
+  job failed with its credit refunded. No network call was made and the ledger was unchanged.
+- cost per approved asset in this run: $0.39, including the rejected versions and the refused photo.
 
-Verified: backend unit and HTTP tests (`server/tests`), app unit tests (`tests/avatar.test.ts`),
-typecheck and lint, and a browser run of the app (Expo web) through the whole flow for a tee, cargos
-and sneakers. Not yet verified on an iPhone; no real model calls have been made through the backend.
+**Production backend, built and tested; not deployed yet** (needs a Fly.io account; see
+`server/DEPLOY.md`): Postgres, private S3 bucket with presigned URLs, separate worker, Sign in with
+Apple, account deletion, wardrobe sync (items with photos, outfits, profile; last write wins).
+Verified with the Docker image itself on Postgres plus an S3 emulator, and the test suite on
+SQLite, Postgres and S3.
 
-Mocked or interim: the replay model provider; anonymous device accounts (no Sign in with Apple, so a
-reinstall starts a new account); local disk and SQLite in place of a private bucket and Postgres; the
-worker runs inside the API process.
+**App**: Sign in with Apple (Profile, and on the mannequin screen when the server requires it),
+sync to the account, delete account, "Closr noticed" notes on review, and on-device layer timing
+in TestFlight builds. Checked with typecheck, lint, 46 unit tests and a browser run of the whole
+flow (replay). **Not yet run on an iPhone.**
 
-Still to develop: worn photos in the app (the backend accepts them), extra styling variants on
-request (drape and closure; the backend supports them), outer layers beyond open shirts, one-pieces
-and accessories on the mannequin, tucks, buttoned variants from busy closet photos, a blue backdrop
-for light pants, and re-preparation when the canonical mannequin changes.
+Still to develop: worn photos and extra styles in the app (the backend supports both), outer
+layers beyond open shirts, one-pieces and accessories on the mannequin, tucks, Apple token
+revocation on account deletion (before App Store release), and re-preparation when the canonical
+mannequin changes. Stored raw renders plus `admin reprocess` let keying and check improvements
+reach existing garments at no render cost.
+
+**On Me (later):** layers are keyed to a `mannequin_id`, and every source photo, worn photo and
+raw render is kept per garment, so a personal body model can become another "mannequin" whose
+layers are prepared on request from the same records. Nothing in Build Outfit assumes a single
+mannequin.

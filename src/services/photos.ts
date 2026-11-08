@@ -113,6 +113,18 @@ export async function persistPhoto(photo: PickedPhoto, name: string): Promise<Ph
   return { localPath: `${PHOTO_DIR}/${fileName}`, width: saved.width, height: saved.height };
 }
 
+/** Saves a photo from a (signed) URL into the photo directory, e.g. on a newly signed-in iPhone. */
+export async function downloadPhoto(url: string, name: string): Promise<string> {
+  if (Platform.OS === 'web') return url; // development previews only
+  const dir = new Directory(rootDirectory(), PHOTO_DIR);
+  dir.create({ intermediates: true, idempotent: true });
+  const fileName = `${name}.jpg`;
+  const dest = new File(dir, fileName);
+  if (dest.exists) dest.delete();
+  await File.downloadFileAsync(url, dest);
+  return `${PHOTO_DIR}/${fileName}`;
+}
+
 /** Removes a photo's files from disk. Safe to call with missing files. */
 export function deletePhoto(ref?: PhotoRef): void {
   if (!ref || Platform.OS === 'web') return;

@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 
-import { ApiError, avatarApi, avatarBackendConfigured, type SignedUrls } from '@/services/avatarApi';
+import { ApiError, avatarApi, avatarBackendConfigured, hasSession, SignInRequired, type SignedUrls } from '@/services/avatarApi';
 import { resolvePhotoUri } from '@/services/photos';
 import { appStorage, STORAGE_KEYS } from '@/services/storage';
 
@@ -42,6 +42,8 @@ interface AvatarState {
   assetsStale: boolean;
   /** Items deleted on the device whose server copy still needs removing. */
   pendingDeletes: string[];
+  /** The server wants an Apple sign-in before preparing; the flow waits (nothing is lost). */
+  needsSignIn: boolean;
 
   start: (item: ClothingItem) => void;
   confirmFit: (itemId: string, corrections: Corrections) => void;
@@ -132,6 +134,10 @@ export const useAvatar = create<AvatarState>()(
             patch(id, { job, stage: job.state, message: job.message ?? undefined });
           }
         } catch (error) {
+          if (error instanceof SignInRequired) {
+            set({ needsSignIn: true }); // waits for sign-in, then resumes where it stopped
+            return;
+          }
           if (error instanceof ApiError && error.offline) return; // try again on the next pump
           if (error instanceof ApiError && error.status === 400 && /analy[sz]e/.test(error.message)) {
             patch(id, { stage: 'analyze' });
@@ -145,6 +151,10 @@ export const useAvatar = create<AvatarState>()(
 
       const work = async () => {
         if (!avatarBackendConfigured()) return;
+        if (get().needsSignIn) {
+          if (!(await hasSession())) return;
+          set({ needsSignIn: false });
+        }
         for (const itemId of get().pendingDeletes) {
           try {
             await api.deleteItem(itemId);
@@ -181,6 +191,7 @@ export const useAvatar = create<AvatarState>()(
         jobsSince: 0,
         assetsStale: true,
         pendingDeletes: [],
+        needsSignIn: false,
 
         start: (item) => {
           if (!canPrepare(item.category) || !avatarBackendConfigured()) return;
@@ -317,6 +328,7 @@ export const useAvatar = create<AvatarState>()(
         jobsSince: s.jobsSince,
         assetsStale: s.assetsStale,
         pendingDeletes: s.pendingDeletes,
+        needsSignIn: s.needsSignIn,
       }),
     },
   ),

@@ -16,10 +16,22 @@
     },
     "production": {
       "autoIncrement": true
+    },
+    "testflight": {
+      "extends": "production",
+      "env": {
+        "EXPO_PUBLIC_CLOSR_API_URL": "https://closr-api.fly.dev",
+        "EXPO_PUBLIC_CLOSR_DIAGNOSTICS": "1"
+      }
     }
   },
   "submit": {
     "production": {
+      "ios": {
+        "ascAppId": "6827766770"
+      }
+    },
+    "testflight": {
       "ios": {
         "ascAppId": "6827766770"
       }

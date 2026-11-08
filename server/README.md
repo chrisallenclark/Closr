@@ -53,12 +53,19 @@ cd server && ../.venv/bin/python -m pytest -q tests
 The HTTP end-to-end test also runs when `CLOSR_TEST_DATA_DIR`, `CLOSR_TEST_REPLAY_DIR` and
 `CLOSR_TEST_PHOTOS` point at a private copy of the mannequin, fixtures and photos.
 
-## Before real users
+## Deploying
 
-- Host the API and a separate worker process (the worker now runs as a thread in the API).
-- Move storage to a private bucket (the `Storage` class is the only file-system code) and the
-  database to Postgres (the SQL is portable; `BEGIN IMMEDIATE` becomes row locks).
-- Set `CLOSR_SIGNING_SECRET`, `GEMINI_API_KEY` (server secret store only) and
-  `CLOSR_MODEL_PROVIDER=gemini`.
-- Replace anonymous device accounts with Sign in with Apple so wardrobes survive a reinstall.
-- Agree an integration-test budget before the first real model call.
+See `DEPLOY.md`: Fly.io (API + worker), Postgres, a private Tigris bucket, Sign in with Apple, and the
+TestFlight build.
+
+## Production setup (implemented; deployment steps in DEPLOY.md)
+
+- The API and the worker run as separate processes (`python -m closr_server.worker`); jobs are leased
+  in the database, so several workers are safe.
+- Postgres via `DATABASE_URL`; a private S3-compatible bucket via `CLOSR_S3_BUCKET`, with presigned,
+  expiring URLs. Locally, SQLite and the disk.
+- Sign in with Apple (`POST /v1/auth/apple`). Set `CLOSR_ALLOW_ANONYMOUS=0` in production; an
+  anonymous development account on a device becomes the Apple account when that Apple ID is new.
+- `DELETE /v1/me` deletes the account with every file and record; `POST /v1/sync` backs up the
+  wardrobe (items with photos, outfits, profile).
+- Every paid render is stored, so `admin reprocess --job <id>` can prepare a garment again for free.

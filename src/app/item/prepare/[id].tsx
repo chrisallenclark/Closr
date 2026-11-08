@@ -3,9 +3,11 @@ import { Camera, Check, ImageIcon, Layers, RotateCcw, Shirt, Sparkles, Wand2 } f
 import { useMemo, useState } from 'react';
 import { ActivityIndicator, Alert, StyleSheet, useWindowDimensions, View } from 'react-native';
 
+import { SignInWithApple } from '@/components/account/SignInWithApple';
 import { MannequinStage, type StageLayers } from '@/components/avatar/MannequinStage';
 import { GarmentFitPicker } from '@/components/avatar/GarmentFitPicker';
 import { Button, EmptyState, haptic, Header, ItemImage, Screen, Text, TextField } from '@/components/ui';
+import { useAccount } from '@/features/account/store';
 import { prepStatus } from '@/features/avatar/status';
 import { canPrepare, useAvatar } from '@/features/avatar/store';
 import type { Corrections, FitKey, ItemPrep } from '@/features/avatar/types';
@@ -32,6 +34,13 @@ function suggestedValues(analysis: ItemPrep['analysis'], corrections: Correction
   return { ...out, ...picked };
 }
 
+/** Differences the automatic photo comparison found, worth a look before approving. */
+function reviewNotes(checks: Record<string, unknown>): string[] {
+  const verify = checks.verify as { mismatches?: string[] } | undefined;
+  // Missing hang tags and stickers are expected: the mannequin wears the garment, not its labels.
+  return (verify?.mismatches ?? []).filter((m) => !/\b(tag|tags|sticker|stickers|hanger|mannequin)\b/i.test(m)).slice(0, 4);
+}
+
 /**
  * Prepare a garment for the mannequin: read the photo, confirm fit only where the reading is
  * unsure, prepare on the server, then review. Leaving the screen never cancels anything: the
@@ -43,6 +52,9 @@ export default function PrepareItem() {
   const prep = useAvatar((s) => (id ? s.byItem[id] : undefined));
   const assets = useAvatar((s) => s.assets);
   const urls = useAvatar((s) => s.urls);
+  const needsSignIn = useAvatar((s) => s.needsSignIn);
+  const signedIn = useAccount((s) => s.signedIn);
+  const signInRequired = useAccount((s) => s.signInRequired);
   const { start, confirmFit, acceptPhoto, approve, requestCorrection, retry } = useAvatar.getState();
   const replacePhoto = useWardrobe((s) => s.replacePhoto);
   const { width } = useWindowDimensions();
@@ -141,6 +153,17 @@ export default function PrepareItem() {
           </Text>
         ) : null}
 
+        {(needsSignIn || signInRequired) && !signedIn ? (
+          <View style={styles.signIn}>
+            <Text variant="bodyStrong">Sign in to prepare garments</Text>
+            <Text variant="caption" color={colors.textMuted}>
+              Prepared garments are saved privately to your account, so they’re on every iPhone you use. Anything already
+              started continues after you sign in.
+            </Text>
+            <SignInWithApple />
+          </View>
+        ) : null}
+
         {!prep ? (
           <>
             <ItemImage photo={item.photo} style={{ width: stageW, height: stageW }} radius={radii.lg} inset={24} />
@@ -209,6 +232,16 @@ export default function PrepareItem() {
               <Text variant="caption" color={colors.textMuted}>
                 Check the colour, print, length and width. If something is off, ask for a correction instead of approving.
               </Text>
+            ) : null}
+            {prep.stage === 'ready_for_review' && reviewNotes(variant.checks).length ? (
+              <View style={styles.notes}>
+                <Text variant="label">Closr noticed</Text>
+                {reviewNotes(variant.checks).map((n) => (
+                  <Text key={n} variant="caption" color={colors.textMuted}>
+                    · {n}
+                  </Text>
+                ))}
+              </View>
             ) : null}
           </>
         ) : null}
@@ -307,5 +340,20 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   correction: { gap: space.lg },
+  signIn: {
+    gap: space.sm,
+    padding: space.lg,
+    borderRadius: radii.lg,
+    backgroundColor: colors.surface,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: colors.border,
+  },
+  notes: {
+    gap: space.xs,
+    padding: space.md,
+    borderRadius: radii.md,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: colors.warning,
+  },
   buttons: { flexDirection: 'row', gap: space.md },
 });

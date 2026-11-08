@@ -1,5 +1,8 @@
 import { Image } from 'expo-image';
+import { useRef } from 'react';
 import { StyleSheet, View } from 'react-native';
+
+import { recordLayerLoad } from '@/features/avatar/perf';
 
 import type { DerivedStack, Placement, Stacking, StageLayers, WardrobeAssets } from '@/features/avatar/types';
 import { absoluteUrl, type SignedUrls } from '@/services/avatarApi';
@@ -45,6 +48,17 @@ export function MannequinStage({ assets, urls, layers, stacking = 'natural', wid
   const w = cw * scale;
   const h = ch * scale;
 
+  // Time from a layer starting to load until it's drawn, per storage key (device diagnostics).
+  const started = useRef(new Map<string, number>());
+  const timing = (k: string) => ({
+    onLoadStart: () => started.current.set(k, performance.now()),
+    onLoad: (e: { cacheType: 'none' | 'disk' | 'memory' }) => {
+      const t0 = started.current.get(k);
+      if (t0 !== undefined) recordLayerLoad({ ms: performance.now() - t0, cache: e.cacheType });
+      started.current.delete(k);
+    },
+  });
+
   const box = (p: Placement) => ({ left: p.x * scale, top: p.y * scale, width: p.w * scale, height: p.h * scale });
   const layer = (id: string, key: string | undefined, p: Placement | undefined) =>
     key && p ? (
@@ -56,6 +70,7 @@ export function MannequinStage({ assets, urls, layers, stacking = 'natural', wid
         cachePolicy="memory-disk"
         transition={0}
         accessibilityIgnoresInvertColors
+        {...timing(key)}
       />
     ) : null;
 

@@ -1,0 +1,6 @@
+# Only the server image is built with Docker; it needs server/ and the prototype pipeline code.
+*
+!server/requirements.txt
+!server/closr_server/**
+!scripts/avatar-prototype/poc/*.py
+**/__pycache__

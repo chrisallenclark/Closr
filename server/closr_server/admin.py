@@ -27,14 +27,26 @@ from .config import Config
 from .db import connect
 
 
+def storage_for(cfg: Config):
+    from .storage import S3Storage, Storage
+
+    return S3Storage(cfg.s3_bucket, cfg.s3_endpoint) if cfg.s3_bucket else Storage(cfg.storage_dir)
+
+
 def install_mannequin(cfg: Config, src: Path) -> None:
-    dst = cfg.storage_dir / "shared" / "mannequins" / cfg.mannequin_id
-    dst.mkdir(parents=True, exist_ok=True)
+    """Into the configured storage: the private bucket in production, local disk in development."""
+    import io
+
+    store = storage_for(cfg)
+    prefix = f"shared/mannequins/{cfg.mannequin_id}/"
     for name in ("canonical.png", "plate.png", "ref-trousers.png", "landmarks.json"):
-        shutil.copyfile(src / name, dst / name)
-    plate = Image.open(src / "plate.png").convert("RGB")
-    plate.resize((540, 960), Image.LANCZOS).save(dst / "plate-display.webp", "WEBP", quality=88)
-    print(f"installed mannequin {cfg.mannequin_id} into {dst}")
+        store.put_bytes(prefix + name, (src / name).read_bytes())
+    plate = Image.open(src / "plate.png").convert("RGB").resize((540, 960), Image.LANCZOS)
+    buf = io.BytesIO()
+    plate.save(buf, "WEBP", quality=88)
+    store.put_bytes(prefix + "plate-display.webp", buf.getvalue())
+    where = f"s3://{cfg.s3_bucket}/{prefix}" if cfg.s3_bucket else str(cfg.storage_dir / prefix)
+    print(f"installed mannequin {cfg.mannequin_id} into {where}")
 
 
 def build_replay(cfg: Config, spec_path: Path) -> None:

@@ -21,6 +21,8 @@ export type ColorId = string;
 export interface PhotoRef {
   localPath?: string;
   remoteUrl?: string;
+  /** The private cloud copy (storage key) once synced; fetched through a signed URL. */
+  remoteKey?: string;
   cutoutPath?: string;
   width?: number;
   height?: number;

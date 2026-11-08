@@ -1,11 +1,13 @@
 import { useSyncExternalStore } from 'react';
 
+import { useAccount } from './account/store';
 import { useAvatar } from './avatar/store';
 import { useOutfits } from './outfits/store';
 import { useProfile } from './profile/store';
+import { useSync } from './sync/store';
 import { useWardrobe } from './wardrobe/store';
 
-const stores = [useWardrobe, useOutfits, useProfile, useAvatar];
+const stores = [useWardrobe, useOutfits, useProfile, useAvatar, useSync, useAccount];
 
 function allHydrated(): boolean {
   return stores.every((s) => s.persist.hasHydrated());

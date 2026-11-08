@@ -10,6 +10,7 @@
     "backgroundColor": "#14100D",
     "ios": {
       "bundleIdentifier": "com.chrisallenclark.closr",
+      "usesAppleSignIn": true,
       "supportsTablet": false,
       "infoPlist": {
         "ITSAppUsesNonExemptEncryption": false
