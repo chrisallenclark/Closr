@@ -55,7 +55,7 @@ class Storage:
         return self._path(key)
 
     def keys(self, prefix: str) -> list[str]:
-        base = self._path(prefix)
+        base = self._path(prefix) if prefix else self.root.resolve()  # "" lists everything
         return [str(p.relative_to(self.root.resolve())) for p in base.rglob("*") if p.is_file()] if base.exists() else []
 
     def delete_prefix(self, prefix: str) -> int:

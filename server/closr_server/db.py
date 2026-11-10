@@ -139,6 +139,13 @@ CREATE TABLE IF NOT EXISTS credit_events (
 """
 
 
+# Schema changes after the base schema, applied once each, in order, on every backend. Never edit
+# or reorder an entry that has shipped; append a new one. Write SQL both SQLite and Postgres accept.
+MIGRATIONS: list[tuple[int, str]] = [
+    # (2, "ALTER TABLE variants ADD COLUMN body_profile TEXT"),  # example of the form
+]
+
+
 def connect(target: str | Path) -> "DB":
     """`postgres://...` (production) or a SQLite file path (development and tests)."""
     t = str(target)
@@ -159,6 +166,23 @@ class DB:
         self._migrate_v1()
         self.conn.executescript(SCHEMA.format(real="REAL", autoid="INTEGER PRIMARY KEY AUTOINCREMENT"))
         self.lock = threading.RLock()
+        self.migrate()
+
+    def migrate(self, migrations: list[tuple[int, str]] | None = None) -> list[int]:
+        """Applies pending MIGRATIONS (each in its own transaction) and returns their versions."""
+        self.run("CREATE TABLE IF NOT EXISTS schema_migrations (version INTEGER PRIMARY KEY, applied_at REAL NOT NULL)")
+        if not self.one("SELECT version FROM schema_migrations WHERE version = 1"):
+            self.run("INSERT INTO schema_migrations (version, applied_at) VALUES (1, ?)", time.time())  # the base schema
+        done = {r["version"] for r in self.all("SELECT version FROM schema_migrations")}
+        applied = []
+        for version, sql in sorted(MIGRATIONS if migrations is None else migrations):
+            if version in done:
+                continue
+            with self.tx():
+                self.run(sql)
+                self.run("INSERT INTO schema_migrations (version, applied_at) VALUES (?, ?)", version, time.time())
+            applied.append(version)
+        return applied
 
     def _migrate_v1(self) -> None:
         """Development databases from before Sign in with Apple kept one device token per user."""
@@ -216,6 +240,7 @@ class PgDB(DB):
                 for stmt in SCHEMA.format(real="DOUBLE PRECISION", autoid="BIGSERIAL PRIMARY KEY").split(";"):
                     if stmt.strip():
                         self.conn.execute(stmt)
+                self.migrate()
             finally:
                 self.conn.execute("SELECT pg_advisory_unlock(7101)")
 

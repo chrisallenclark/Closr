@@ -9,6 +9,8 @@
       closr-backup-index.json, plus closr-replay-bundle.json)
   python -m closr_server.admin reprocess --job <id>
       prepares a job again from its stored render (no new render is paid for)
+  python -m closr_server.admin export --to <dir> | import --from <dir> [--force]
+      full backup (database + every stored file) and restore, on any backend (closr_server/backup.py)
   python -m closr_server.admin spend
       prints spend per model, per user, and cost per usable asset from the ledger
 """
@@ -117,6 +119,11 @@ def main() -> int:
     rb.add_argument("--mannequin-only", action="store_true")
     rp = sub.add_parser("reprocess")
     rp.add_argument("--job", required=True)
+    ex = sub.add_parser("export")
+    ex.add_argument("--to", dest="dest", required=True, type=Path)
+    im = sub.add_parser("import")
+    im.add_argument("--from", dest="src", required=True, type=Path)
+    im.add_argument("--force", action="store_true")
     sub.add_parser("spend")
     args = p.parse_args()
     cfg = Config()
@@ -124,6 +131,12 @@ def main() -> int:
         install_mannequin(cfg, args.src)
     elif args.cmd == "build-replay":
         build_replay(cfg, args.spec)
+    elif args.cmd in ("export", "import"):
+        from . import backup
+
+        db, store = connect(cfg.database), storage_for(cfg)
+        out = backup.export(db, store, args.dest) if args.cmd == "export" else backup.restore(db, store, args.src, args.force)
+        print(json.dumps(out, indent=1))
     elif args.cmd == "reprocess":
         from .service import Service
 

@@ -3,7 +3,7 @@
 Prices were checked on 2026-11-10 against the providers' pricing pages and docs (sources at the end).
 Estimates assume US East.
 
-## Recommended beta configuration (`fly.beta.toml`)
+## Recommended beta configuration (`fly.toml`)
 
 | Piece | Choice | Runs continuously? |
 |---|---|---|
@@ -22,7 +22,7 @@ This needs no architecture change. It's the existing image with the worker insid
 - **All-time spending cap** `CLOSR_GLOBAL_TOTAL_USD`, set to $1.80: the rest of the approved $3
   integration-test budget ($1.16 is already spent). The daily and monthly caps stay on as well.
 
-The scaled configuration (`fly.toml`: separate always-on API and worker, Fly Managed Postgres) is
+The scaled configuration (`fly.scaled.toml`: separate always-on API and worker, Fly Managed Postgres) is
 for later. Moving to it is a config and secrets change, not a code change.
 
 ## Unit prices used
@@ -52,7 +52,7 @@ Assumptions:
 | 1 | ~15 h running ≈ $0.26 + $0.30 stopped rootfs | Neon Free $0 | 0.1 GB, free | **≈ $0.60** |
 | 10 | ~180–300 h ≈ $3–5 | Neon Free (≈ 45–75 of 100 CU-h) | 1.2 GB, free | **≈ $3–6** |
 | 100 | effectively always on ≈ $12.69 | ≈ 180 CU-h, over free: Neon Launch ≈ $19, or stay free with tighter use | 12 GB ≈ $0.15 | **≈ $15–35** |
-| 1,000 | move to `fly.toml`: 2 API (1 GB) + 2–3 workers (2 GB) ≈ $45–55 | Neon Launch ≈ $40–75, or Fly MPG Basic $38 + storage | 120 GB ≈ $2.30 + writes ≈ $1 | **≈ $90–135** |
+| 1,000 | move to `fly.scaled.toml`: 2 API (1 GB) + 2–3 workers (2 GB) ≈ $45–55 | Neon Launch ≈ $40–75, or Fly MPG Basic $38 + storage | 120 GB ≈ $2.30 + writes ≈ $1 | **≈ $90–135** |
 
 Why 1,000 users means more machines: one in-process worker prepares one garment at a time (about
 30–80 s each, mostly waiting on Gemini), so roughly 45–100 garments an hour. That's fine for a beta;

@@ -18,6 +18,15 @@ export interface MannequinStageProps {
   height: number;
 }
 
+/**
+ * Back-to-front draw order on the mannequin. The shoe is split around the hem (back under the
+ * pants, toe over it). New garment types are added as slots here: a dress or skirt between the
+ * shoes and the top, boots whose shaft sits over the hem after `shoeToe`, a tucked top before
+ * `bottom`. The order is data, so the renderer doesn't change shape when they arrive.
+ */
+export const STAGE_ORDER = ['shoeBack', 'bottom', 'shoeToe', 'shoes', 'top', 'outerwear'] as const;
+type StageSlot = (typeof STAGE_ORDER)[number];
+
 /** Image source for a storage key. The key is immutable, so it doubles as the disk-cache key. */
 export function layerSource(urls: SignedUrls, key: string | undefined) {
   if (!key) return undefined;
@@ -80,6 +89,20 @@ export function MannequinStage({ assets, urls, layers, stacking = 'natural', wid
   const split = !!(layers.bottom && back && toe);
   const stack = derivedFor(assets, layers, stacking);
 
+  // What each draw slot shows for this outfit; STAGE_ORDER decides back-to-front order.
+  const parts: Record<StageSlot, { key?: string; place?: Placement } | null> = {
+    shoeBack: shoes && split ? { key: back!.key, place: back } : null,
+    bottom: layers.bottom
+      ? stack
+        ? { key: stack.display, place: stack.placement }
+        : { key: layers.bottom.display, place: layers.bottom.placement }
+      : null,
+    shoeToe: shoes && split ? { key: toe!.key, place: toe } : null,
+    shoes: shoes && !split ? { key: shoes.display, place: shoes.placement } : null,
+    top: layers.top ? { key: layers.top.display, place: layers.top.placement } : null,
+    outerwear: layers.outerwear ? { key: layers.outerwear.display, place: layers.outerwear.placement } : null,
+  };
+
   return (
     <View style={{ width, height, alignItems: 'center', justifyContent: 'center', overflow: 'hidden' }}>
       {!narrow ? (
@@ -100,16 +123,7 @@ export function MannequinStage({ assets, urls, layers, stacking = 'natural', wid
           cachePolicy="memory-disk"
           transition={0}
         />
-        {shoes && split ? layer('shoe-back', back!.key, back) : null}
-        {layers.bottom
-          ? stack
-            ? layer('pants', stack.display, stack.placement)
-            : layer('pants', layers.bottom.display, layers.bottom.placement)
-          : null}
-        {shoes && split ? layer('shoe-toe', toe!.key, toe) : null}
-        {shoes && !split ? layer('shoes', shoes.display, shoes.placement) : null}
-        {layers.top ? layer('top', layers.top.display, layers.top.placement) : null}
-        {layers.outerwear ? layer('outer', layers.outerwear.display, layers.outerwear.placement) : null}
+        {STAGE_ORDER.map((slot) => (parts[slot] ? layer(slot, parts[slot]!.key, parts[slot]!.place) : null))}
       </View>
     </View>
   );

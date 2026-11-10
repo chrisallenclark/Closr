@@ -104,6 +104,21 @@ revocation on account deletion (before App Store release), and re-preparation wh
 mannequin changes. Stored raw renders plus `admin reprocess` let keying and check improvements
 reach existing garments at no render cost.
 
+**Extension points for body profiles and more garment types** (next milestone; nothing gender-specific is hardcoded):
+- **Body profiles:** a profile is a mannequin (`shared/mannequins/<id>/` with its own plate,
+  reference base and `landmarks.json`). Every job records its `mannequinId`, which is part of the
+  idempotency key, and every layer stores the mannequin it's aligned to. The manifest only returns
+  layers for the active mannequin. A second profile means new jobs, never a clash with existing
+  layers. What's missing is choosing a profile per person: a field on the profile or account
+  record, then `Config.mannequin_id` per request.
+- **Garment types:** preparation is `pipeline.PREPARERS[category]`; `CATEGORIES` gates the API. A
+  dress, skirt or boots is a new preparer and prompt, plus a variant key (e.g. `length=midi`).
+- **Layering:** `STAGE_ORDER` in `MannequinStage.tsx` is the back-to-front order as data.
+  One-pieces, skirts, tucked tops and boot shafts are new slots, not a new renderer.
+- **Fit vocabulary:** width, length, sleeves, leg shape and rise are neutral; heels need a
+  mannequin pose or profile with raised heels, not a different data model.
+- **Schema:** append to `db.MIGRATIONS`; full backup and restore with `admin export` / `admin import`.
+
 **On Me (later):** layers are keyed to a `mannequin_id`, and every source photo, worn photo and
 raw render is kept per garment, so a personal body model can become another "mannequin" whose
 layers are prepared on request from the same records. Nothing in Build Outfit assumes a single

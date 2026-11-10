@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+from pathlib import Path
 import io
 import time
 
@@ -153,3 +154,53 @@ def test_postgres_reconnects_after_the_server_drops_the_connection(tmp_path, bac
     with psycopg.connect(backend["database_url"], autocommit=True) as admin:
         admin.execute("SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = current_database() AND pid <> pg_backend_pid()")
     svc.guard.reserve(uid, None, "render", "replay")  # transaction: reconnects before BEGIN
+
+
+def test_schema_migrations_apply_once_in_order(tmp_path, backend):
+    svc = make(tmp_path, backend)
+    steps = [(3, "CREATE INDEX IF NOT EXISTS variants_profile ON variants (mannequin_id)"), (2, "ALTER TABLE variants ADD COLUMN body_profile TEXT")]
+    assert svc.db.migrate(steps) == [2, 3]
+    assert svc.db.migrate(steps) == []  # already applied: nothing runs twice
+    svc.db.run("UPDATE variants SET body_profile = 'x'")  # the column exists
+    assert {r["version"] for r in svc.db.all("SELECT version FROM schema_migrations")} == {1, 2, 3}
+
+
+def test_backup_restores_database_and_files_onto_another_backend(tmp_path, backend):
+    """Export from one deployment and import into a fresh one (here: the selected backend)."""
+    from closr_server import backup
+
+    src = Service(Config(data_dir=tmp_path / "a", provider="replay", replay_dir=tmp_path / "r", limits=Limits(starting_credits=3)))
+    me = src.create_session()
+    key = src.add_photo(me["userId"], "tee", "garment", photo())["storageKey"]
+    src.sync(me["userId"], 0, [{"kind": "item", "id": "tee", "data": {"name": "Tee"}, "updatedAt": 1}])
+    src.guard.reserve(me["userId"], None, "analyze", "replay")
+    manifest = backup.export(src.db, src.storage, tmp_path / "backup")
+    assert manifest["files"] == 1 and manifest["rows"]["records"] == 1
+
+    dst = make(tmp_path / "b", backend)
+    out = backup.restore(dst.db, dst.storage, tmp_path / "backup")
+    assert out["files"] == 1
+    assert dst.user_for_token(me["token"]) == me["userId"]  # the same sign-in keeps working
+    assert dst.storage.get_bytes(key) == src.storage.get_bytes(key)
+    assert dst.sync(me["userId"], 0, [])["changes"][0]["data"] == {"name": "Tee"}
+    dst.guard.reserve(me["userId"], None, "analyze", "replay")  # new ledger rows don't collide with restored ids
+    with pytest.raises(SystemExit):
+        backup.restore(dst.db, dst.storage, tmp_path / "backup")  # never over a live database by accident
+
+
+def test_admin_routes_need_the_operator_token(tmp_path, backend):
+    from fastapi.testclient import TestClient
+
+    from closr_server.app import create_app
+
+    cfg = Config(data_dir=tmp_path, provider="replay", admin_token="op-secret", **backend)
+    http = TestClient(create_app(cfg, run_worker=False))
+    assert http.get("/v1/admin/status").status_code == 404
+    assert http.get("/v1/admin/status", headers={"X-Closr-Admin-Token": "wrong"}).status_code == 404
+    png = io.BytesIO(); Image.new("RGB", (1080, 1920), (40, 40, 40)).save(png, "PNG")
+    files = {k: (k, png.getvalue(), "image/png") for k in ("canonical", "plate", "ref_trousers")}
+    files["landmarks"] = ("landmarks.json", b'{"cx": 562}', "application/json")
+    r = http.post("/v1/admin/mannequin", headers={"X-Closr-Admin-Token": "op-secret"}, files=files)
+    assert r.status_code == 200, r.text
+    st = http.get("/v1/admin/status", headers={"X-Closr-Admin-Token": "op-secret"}).json()
+    assert st["mannequinInstalled"] and st["spend"]["total_usd"] == 0

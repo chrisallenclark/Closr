@@ -82,6 +82,41 @@ class Service:
             self._mannequin = pipeline.Mannequin.load(folder)
         return self._mannequin
 
+    MANNEQUIN_FILES = ("canonical.png", "plate.png", "ref-trousers.png", "landmarks.json")
+
+    def install_mannequin(self, files: dict[str, bytes]) -> dict:
+        """Operator action: store the canonical mannequin (and its phone-size plate) in storage."""
+        missing = [n for n in self.MANNEQUIN_FILES if n not in files]
+        if missing:
+            raise BadRequest(f"missing {missing}")
+        json.loads(files["landmarks.json"])
+        for name in self.MANNEQUIN_FILES:
+            Image.open(io.BytesIO(files[name])).verify() if name.endswith(".png") else None
+            self.storage.put_bytes(self.mannequin_prefix + name, files[name])
+        plate = Image.open(io.BytesIO(files["plate.png"])).convert("RGB").resize((540, 960), Image.LANCZOS)
+        self.storage.put_image(self.mannequin_prefix + "plate-display.webp", plate, quality=88)
+        self._mannequin = None  # reload on the next job
+        return {"installed": self.cfg.mannequin_id}
+
+    def status(self) -> dict:
+        """Operator view: spend against every cap, jobs by state, accounts. No personal data."""
+        g, lim = self.guard, self.cfg.limits
+        import time as _t
+
+        day = _t.time() - (_t.time() % 86400)
+        return {
+            "mannequinInstalled": self.storage.exists(self.mannequin_prefix + "landmarks.json"),
+            "provider": self.cfg.provider,
+            "spend": {"total_usd": round(g._spent(0), 4), "today_usd": round(g._spent(day), 4),
+                      "total_cap_usd": lim.global_total_usd or None, "daily_cap_usd": lim.global_daily_usd,
+                      "by_model": [dict(r) for r in self.db.all(
+                          "SELECT model, COUNT(*) AS calls, ROUND(CAST(SUM(COALESCE(cost_usd, reserved_usd)) AS NUMERIC), 4) AS usd "
+                          "FROM model_calls GROUP BY model")]},
+            "jobs": {r["state"]: r["n"] for r in self.db.all("SELECT state, COUNT(*) AS n FROM jobs GROUP BY state")},
+            "accounts": self.db.one("SELECT COUNT(*) AS n FROM users")["n"],
+            "approvedLayers": self.db.one("SELECT COUNT(*) AS n FROM variants WHERE status = 'approved'")["n"],
+        }
+
     def mannequin_info(self) -> dict:
         lm = json.loads(self.storage.get_bytes(self.mannequin_prefix + "landmarks.json"))
         return {"id": self.cfg.mannequin_id, "canvas": [1080, 1920], "displayScale": DISPLAY_SCALE,
@@ -272,7 +307,8 @@ class Service:
             raise BadRequest("this photo needs to be retaken: " + analysis["needsAnotherPhoto"])
         styling = styling or {}
         observed = pipeline.apply_corrections(analysis.get("observed", {}), category, corrections or {})
-        request: dict = {"observed": observed}
+        # Every layer is prepared for one mannequin (body profile); a new profile means new jobs.
+        request: dict = {"observed": observed, "mannequinId": self.cfg.mannequin_id}
         if category in ("top", "outerwear"):
             request["drape"] = styling.get("drape") or pipeline.default_drape(observed)
             request["closure"] = styling.get("closure")
@@ -284,7 +320,8 @@ class Service:
             variant_key = "pair"
         if correction_note:
             request["correction"] = correction_note[:300]
-        idem = _sha(dumps([user_id, item_id, category, variant_key, photo["sha256"], corrections or {}, correction_note or "", nonce or ""]).encode())
+        idem = _sha(dumps([user_id, item_id, category, request["mannequinId"], variant_key, photo["sha256"], corrections or {},
+                           correction_note or "", nonce or ""]).encode())
 
         existing = self.db.one("SELECT * FROM jobs WHERE idem_key = ?", idem)
         if existing:
@@ -404,6 +441,13 @@ class Service:
         self.db.run("UPDATE jobs SET state = 'ready_for_review', variant_id = ?, message = NULL, updated_at = ? WHERE id = ?", vid, now(), job_id)
         return vid
 
+    def recover_interrupted(self) -> int:
+        """Single-worker deployments only (the worker inside the API process): at startup, jobs
+        left 'preparing' by a stopped or restarted machine resume now instead of after their lease.
+        Each resumption still counts as an attempt, so the attempt cap bounds what it can cost."""
+        cur = self.db.run("UPDATE jobs SET lease_until = 0 WHERE state = 'preparing'")
+        return cur.rowcount if hasattr(cur, "rowcount") else 0
+
     def work_once(self) -> bool:
         job = self.claim()
         if not job:
@@ -437,7 +481,8 @@ class Service:
         self.db.run(
             "INSERT INTO variants (id, user_id, item_id, category, variant_key, version, status, mannequin_id, master_key, display_key, placement, "
             "styling, checks, job_id, created_at) VALUES (?, ?, ?, ?, ?, ?, 'needs_review', ?, ?, ?, ?, ?, ?, ?, ?)",
-            vid, user_id, item_id, job["category"], key, version, self.cfg.mannequin_id, base + "master.webp", base + "display.webp",
+            vid, user_id, item_id, job["category"], key, version, loads(job["request"]).get("mannequinId", self.cfg.mannequin_id),
+            base + "master.webp", base + "display.webp",
             dumps({"x": bbox[0], "y": bbox[1], "w": crop.width, "h": crop.height}), dumps(styling), dumps(prepared.checks), job["id"], now())
         return vid
 
@@ -454,8 +499,8 @@ class Service:
         t = now()
         with self.db.tx():
             if approve:
-                self.db.run("UPDATE variants SET status = 'superseded' WHERE user_id = ? AND item_id = ? AND variant_key = ? AND status = 'approved'",
-                            user_id, r["item_id"], r["variant_key"])
+                self.db.run("UPDATE variants SET status = 'superseded' WHERE user_id = ? AND item_id = ? AND variant_key = ? "
+                            "AND mannequin_id = ? AND status = 'approved'", user_id, r["item_id"], r["variant_key"], r["mannequin_id"])
             self.db.run("UPDATE variants SET status = ?, reviewed_at = ? WHERE id = ?", "approved" if approve else "rejected", t, variant_id)
             if r["job_id"]:
                 self.db.run("UPDATE jobs SET state = ?, updated_at = ? WHERE id = ?", "approved" if approve else "rejected", t, r["job_id"])
@@ -467,7 +512,8 @@ class Service:
         """Stack every approved pants against every approved shoe the user has (free, deterministic)."""
         v = self.db.one("SELECT * FROM variants WHERE id = ?", variant_id)
         other = "shoes" if v["category"] == "bottom" else "bottom"
-        partners = self.db.all("SELECT * FROM variants WHERE user_id = ? AND category = ? AND status = 'approved'", user_id, other)
+        partners = self.db.all("SELECT * FROM variants WHERE user_id = ? AND category = ? AND status = 'approved' AND mannequin_id = ?",
+                               user_id, other, v["mannequin_id"])
         for p in partners:
             pants, shoes = (v, p) if v["category"] == "bottom" else (p, v)
             self._derive_pair(user_id, pants, shoes)
@@ -492,11 +538,15 @@ class Service:
 
     def wardrobe_assets(self, user_id: str) -> dict:
         """Everything Build Outfit needs, in one call the app caches: approved layers and stacked pairs."""
+        # Only layers aligned to the current mannequin: layers made for another body profile would be misplaced.
         variants = [self.variant_out(r) for r in self.db.all(
-            "SELECT * FROM variants WHERE user_id = ? AND status = 'approved' ORDER BY created_at", user_id)]
+            "SELECT * FROM variants WHERE user_id = ? AND status = 'approved' AND mannequin_id = ? ORDER BY created_at",
+            user_id, self.cfg.mannequin_id)]
+        ids = {v["id"] for v in variants}
         derived = [{"pantsVariantId": r["pants_variant_id"], "shoesVariantId": r["shoes_variant_id"], "stacking": r["stacking"],
                     "display": r["display_key"], "placement": loads(r["placement"])}
-                   for r in self.db.all("SELECT * FROM derived WHERE user_id = ?", user_id)]
+                   for r in self.db.all("SELECT * FROM derived WHERE user_id = ?", user_id)
+                   if r["pants_variant_id"] in ids and r["shoes_variant_id"] in ids]
         return {"mannequin": self.mannequin_info(), "variants": variants, "derived": derived}
 
     def delete_item(self, user_id: str, item_id: str) -> None:

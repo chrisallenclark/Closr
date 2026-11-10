@@ -55,7 +55,8 @@ class Config:
     # Production: DATABASE_URL=postgres://... ; development: a SQLite file in data_dir.
     database_url: str = _env("DATABASE_URL", "")
     # Production: a private S3-compatible bucket (Tigris, R2, S3); development: local disk.
-    s3_bucket: str = _env("CLOSR_S3_BUCKET", "")
+    # BUCKET_NAME is what `fly storage create` (Tigris) sets.
+    s3_bucket: str = _env("CLOSR_S3_BUCKET", "") or _env("BUCKET_NAME", "")
     s3_endpoint: str = _env("AWS_ENDPOINT_URL_S3", "")
     # Sign in with Apple: the app's bundle id(s) an identity token must be issued for.
     apple_audiences: tuple = tuple(a for a in _env("CLOSR_APPLE_AUDIENCES", "com.chrisallenclark.closr").split(",") if a)
@@ -64,6 +65,8 @@ class Config:
     # Single-machine hosting that stops when idle: while jobs are queued or running, the worker
     # requests this URL so the host keeps the machine up (Fly sets FLY_APP_NAME).
     keepalive_url: str = _env("CLOSR_KEEPALIVE_URL", f"https://{os.environ['FLY_APP_NAME']}.fly.dev/healthz" if os.environ.get("FLY_APP_NAME") else "")
+    # Operator token for the admin endpoints (mannequin install, spend report); unset disables them.
+    admin_token: str = _env("CLOSR_ADMIN_TOKEN", "")
     # Where the worker keeps a local copy of the mannequin files when storage is a bucket.
     cache_dir: Path = field(default_factory=lambda: Path(_env("CLOSR_CACHE_DIR", "/tmp/closr-cache")).resolve())
 

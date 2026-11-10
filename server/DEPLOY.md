@@ -6,42 +6,55 @@ S3-compatible bucket. `fly.toml` sets this up on Fly.io, which provides all thre
 Managed Postgres, and Tigris storage). The image runs anywhere else just as well: set the
 environment variables below.
 
-## 0. Private beta (lowest cost): `fly.beta.toml`
+## 0. Private beta (lowest cost): `fly.toml`
 
-Costs and tradeoffs are in `docs/beta-hosting.md`. Every secret is entered by you, in your own
-terminal or the provider's dashboard. None of them goes into chat, the repo or the app.
+Costs and tradeoffs are in `docs/beta-hosting.md`. You enter every secret yourself, in the
+provider's dashboard. None of them goes into chat, the repo, your shell history or the app.
 
-1. **Neon** (neon.com, Free plan): create a project in **AWS us-east-1**. Copy its connection
-   string; it includes `sslmode=require`.
-2. **Fly.io**: create an account and add a card. Then, from a clone of this branch:
+**A. Neon (database), about 3 minutes**
+1. Sign up at https://neon.com (Free plan, no card). Create a project named `closr`, region
+   **AWS US East (N. Virginia)**.
+2. On the project dashboard, choose **Connect** and copy the connection string (starts
+   `postgresql://`, ends `sslmode=require`). Keep the tab open for step B5.
+
+**B. Fly.io (server and private image storage), about 10 minutes**
+1. Sign up at https://fly.io and add a card (billing is per use; see the cost table).
+2. In Terminal on your Mac:
    ```bash
-   brew install flyctl && fly auth login
-   fly launch --no-deploy -c fly.beta.toml --copy-config   # rename the app if "closr-api" is taken
-   fly storage create                                      # private Tigris bucket; sets AWS_* secrets, prints BUCKET_NAME
-   fly secrets set -c fly.beta.toml \
-       DATABASE_URL='<Neon connection string>' \
-       CLOSR_S3_BUCKET='<BUCKET_NAME>' \
-       CLOSR_SIGNING_SECRET="$(openssl rand -hex 32)" \
-       GEMINI_API_KEY='<your key>'
-   fly deploy -c fly.beta.toml
-   fly scale count 1 -c fly.beta.toml
-   fly ips list -c fly.beta.toml             # want a shared IPv4 + IPv6 only (no $2/month dedicated IPv4)
-   curl https://closr-api.fly.dev/healthz    # {"ok":true}
+   brew install flyctl
+   git clone -b claude/loving-feynman-e27jo0 https://github.com/chrisallenclark/Closr.git && cd Closr
+   fly auth login
+   fly launch --no-deploy --copy-config --name closr-api   # "No" to databases or Redis if asked
+   fly storage create --name closr-images                   # private Tigris bucket; adds its keys to the app itself
+   openssl rand -hex 24 | pbcopy                            # an operator token, now on your clipboard
    ```
-3. **Mannequin**: download the five files listed in the private backup page's "Mannequin kit"
-   into a folder `closr-backup`, then copy them to the machine and install:
-   ```bash
-   fly ssh console -c fly.beta.toml -C "mkdir -p /tmp/closr-backup"
-   fly ssh sftp shell -c fly.beta.toml        # put each file into /tmp/closr-backup/
-   fly ssh console -c fly.beta.toml -C "python -m closr_server.admin restore-backup --mannequin-only --from /tmp/closr-backup"
-   ```
-4. **TestFlight**: section 3 below.
+   If `closr-api` is taken, pick another name and tell Claude (the app's server address uses it).
+3. Open https://fly.io/dashboard → **closr-api** → **Secrets** and add three secrets:
+   - `CLOSR_ADMIN_TOKEN`: paste from the clipboard (step 2). Keep it there for the next step.
+   - `DATABASE_URL`: the Neon connection string (step A2).
+   - `GEMINI_API_KEY`: your Gemini key.
+4. Claude then asks for the operator token through a secure form (not chat). Paste the same value.
+   It's used only to install the mannequin and read the spend report.
+5. Back in Terminal: `fly deploy` (about 5 minutes the first time), then `fly scale count 1`.
 
-## 1. Scaled backend on Fly.io (`fly.toml`, later)
+Claude then installs the mannequin through the operator token and verifies the hosted API.
+
+**C. TestFlight, about 5 minutes of your time plus a ~20-minute cloud build**
+
+In the same folder:
+```bash
+npx eas-cli build --platform ios --profile testflight --auto-submit
+```
+Sign in with your Apple ID when asked. This first build adds the Sign in with Apple capability to
+the app's provisioning profile, which needs your Apple login; later builds can run without you.
+When it finishes, the build shows up in TestFlight on your iPhone after Apple's processing (about
+10–30 minutes).
+
+## 1. Scaled backend on Fly.io (`fly.scaled.toml`, later)
 
 ```bash
 brew install flyctl && fly auth login
-fly launch --no-deploy --copy-config          # keeps fly.toml; rename the app if "closr-api" is taken
+fly launch --no-deploy -c fly.scaled.toml --copy-config  # keeps the config; rename the app if "closr-api" is taken
 fly mpg create                                # Managed Postgres; then attach it, which sets DATABASE_URL
 fly storage create                            # private Tigris bucket; sets AWS_* secrets and BUCKET_NAME
 fly secrets set CLOSR_S3_BUCKET=<BUCKET_NAME from the previous step> \

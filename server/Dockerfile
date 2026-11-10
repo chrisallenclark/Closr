@@ -5,7 +5,10 @@ FROM python:3.12-slim
 ENV PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \
     U2NET_HOME=/opt/u2net \
-    CLOSR_CACHE_DIR=/tmp/closr-cache
+    CLOSR_CACHE_DIR=/tmp/closr-cache \
+    CLOSR_DATA_DIR=/tmp/closr-data
+# (Production keeps nothing on the machine: Postgres and the bucket hold all data. CLOSR_DATA_DIR
+#  is only scratch, e.g. the local URL-signing key, which bucket storage doesn't use.)
 
 WORKDIR /app
 COPY server/requirements.txt server/requirements.txt

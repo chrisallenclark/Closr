@@ -111,6 +111,24 @@ def create_app(cfg: Config | None = None, run_worker: bool = True) -> FastAPI:
         except SpendLimit as err:
             raise HTTPException(503, f"Garment preparation is paused: {err}") from err
 
+    def operator(x_closr_admin_token: str = Header(default="")) -> None:
+        import hmac
+
+        want = svc.cfg.admin_token
+        if not want or not hmac.compare_digest(x_closr_admin_token.encode(), want.encode()):
+            raise HTTPException(404, "not found")  # admin routes don't exist without the token
+
+    @app.get("/v1/admin/status", dependencies=[Depends(operator)])
+    def admin_status():
+        return svc.status()
+
+    @app.post("/v1/admin/mannequin", dependencies=[Depends(operator)])
+    async def admin_mannequin(canonical: UploadFile = File(...), plate: UploadFile = File(...),
+                              ref_trousers: UploadFile = File(...), landmarks: UploadFile = File(...)):
+        files = {"canonical.png": await canonical.read(), "plate.png": await plate.read(),
+                 "ref-trousers.png": await ref_trousers.read(), "landmarks.json": await landmarks.read()}
+        return guarded(svc.install_mannequin, files)
+
     @app.get("/healthz")
     def healthz():
         svc.db.one("SELECT 1 AS ok")
@@ -200,6 +218,11 @@ def create_app(cfg: Config | None = None, run_worker: bool = True) -> FastAPI:
         return FileResponse(path, headers={"Cache-Control": "private, max-age=31536000, immutable"})
 
     if run_worker and os.environ.get("CLOSR_RUN_WORKER", "1") == "1":
+        # The only worker (beta: inside this process), so nothing else can be running a job now.
+        resumed = svc.recover_interrupted()
+        if resumed:
+            print(f"resuming {resumed} interrupted job(s)", flush=True)
+
         def loop():
             while True:
                 try:

@@ -261,3 +261,19 @@ def test_total_budget_stops_spending_across_days(tmp_path, backend):
     s.db.run("UPDATE model_calls SET created_at = created_at - 3 * 86400")  # spent days ago
     with pytest.raises(SpendLimit):
         s.guard.reserve("u1", None, "render", "gemini-3-pro-image")  # 0.60 > 0.50 total, though today is empty
+
+
+def test_a_restarted_single_worker_resumes_interrupted_jobs_at_once(svc, monkeypatch):
+    monkeypatch.setitem(pipeline.PREPARERS, "top", ok_preparer)
+    uid = svc.create_session()["userId"]
+    seed_analysis(svc, uid, "tee")
+    job = svc.request_job(uid, "tee", "top")
+    assert svc.claim()["id"] == job["id"]  # the machine stops mid-job (lease still running)
+    restarted = Service(svc.cfg)
+    restarted.mannequin = lambda: None
+    assert restarted.claim() is None  # without recovery it would wait for the lease
+    restarted.recover_interrupted()
+    assert restarted.work_once()
+    done = restarted.get_job(uid, job["id"])
+    assert done["state"] == "ready_for_review" and done["attempts"] == 2  # the interruption counted
+    assert svc.guard.usage(uid)["credits"] == 2  # still one credit for one garment
