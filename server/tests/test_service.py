@@ -252,3 +252,12 @@ def test_thinking_tokens_are_billed(svc):
     call = svc.guard.reserve("u1", None, "render", "gemini-3-pro-image")
     usd = svc.guard.settle(call, "gemini-3-pro-image", {"promptTokenCount": 0, "candidatesTokenCount": 1000, "thoughtsTokenCount": 500}, True)
     assert abs(usd - 1500 * 120 / 1e6) < 1e-9
+
+
+def test_total_budget_stops_spending_across_days(tmp_path, backend):
+    cfg = Config(data_dir=tmp_path, provider="replay", **backend, limits=Limits(global_total_usd=0.50, global_daily_usd=5, user_daily_usd=5))
+    s = Service(cfg)
+    s.guard.reserve("u1", None, "render", "gemini-3-pro-image")  # 0.30
+    s.db.run("UPDATE model_calls SET created_at = created_at - 3 * 86400")  # spent days ago
+    with pytest.raises(SpendLimit):
+        s.guard.reserve("u1", None, "render", "gemini-3-pro-image")  # 0.60 > 0.50 total, though today is empty

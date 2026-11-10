@@ -69,7 +69,7 @@ def build_replay(cfg: Config, spec_path: Path) -> None:
         print(f"{Path(entry['photo']).name}: {sha[:12]} -> {sorted(p.name for p in d.iterdir())}")
 
 
-def restore_backup(cfg: Config, src: Path) -> None:
+def restore_backup(cfg: Config, src: Path, mannequin_only: bool = False) -> None:
     """Mannequin + replay fixtures from the backup: images are lossless, so renders come back exact."""
     import tempfile
 
@@ -82,6 +82,8 @@ def restore_backup(cfg: Config, src: Path) -> None:
             Image.open(src / backup).save(t / name)
         (t / "landmarks.json").write_text(json.dumps(bundle["landmarks"], indent=1))
         install_mannequin(cfg, t)
+    if mannequin_only:  # production needs only the mannequin (5 files: index, bundle, 3 images)
+        return
     for rel, entry in bundle["replay"].items():
         dest = cfg.replay_dir / rel
         dest.parent.mkdir(parents=True, exist_ok=True)
@@ -112,6 +114,7 @@ def main() -> int:
     r.add_argument("--spec", required=True, type=Path)
     rb = sub.add_parser("restore-backup")
     rb.add_argument("--from", dest="src", required=True, type=Path)
+    rb.add_argument("--mannequin-only", action="store_true")
     rp = sub.add_parser("reprocess")
     rp.add_argument("--job", required=True)
     sub.add_parser("spend")
@@ -126,7 +129,7 @@ def main() -> int:
 
         print("new version for review:", Service(cfg).reprocess(args.job))
     elif args.cmd == "restore-backup":
-        restore_backup(cfg, args.src)
+        restore_backup(cfg, args.src, args.mannequin_only)
     else:
         spend(cfg)
     return 0

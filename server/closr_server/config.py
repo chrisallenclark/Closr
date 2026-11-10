@@ -28,6 +28,8 @@ class Limits:
     user_daily_usd: float = float(_env("CLOSR_USER_DAILY_USD", "1.50"))
     user_monthly_usd: float = float(_env("CLOSR_USER_MONTHLY_USD", "10.00"))
     global_daily_usd: float = float(_env("CLOSR_GLOBAL_DAILY_USD", "5.00"))
+    # All-time spend for the whole service, e.g. a fixed test budget; 0 turns it off.
+    global_total_usd: float = float(_env("CLOSR_GLOBAL_TOTAL_USD", "0"))
     # Variants a user may request beyond the default, per garment.
     extra_variants_per_item: int = int(_env("CLOSR_EXTRA_VARIANTS_PER_ITEM", "3"))
 
@@ -59,6 +61,9 @@ class Config:
     apple_audiences: tuple = tuple(a for a in _env("CLOSR_APPLE_AUDIENCES", "com.chrisallenclark.closr").split(",") if a)
     # Anonymous device accounts are for development; production requires Sign in with Apple.
     allow_anonymous: bool = _env("CLOSR_ALLOW_ANONYMOUS", "1") == "1"
+    # Single-machine hosting that stops when idle: while jobs are queued or running, the worker
+    # requests this URL so the host keeps the machine up (Fly sets FLY_APP_NAME).
+    keepalive_url: str = _env("CLOSR_KEEPALIVE_URL", f"https://{os.environ['FLY_APP_NAME']}.fly.dev/healthz" if os.environ.get("FLY_APP_NAME") else "")
     # Where the worker keeps a local copy of the mannequin files when storage is a bucket.
     cache_dir: Path = field(default_factory=lambda: Path(_env("CLOSR_CACHE_DIR", "/tmp/closr-cache")).resolve())
 

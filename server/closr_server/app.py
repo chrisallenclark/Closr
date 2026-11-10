@@ -47,6 +47,20 @@ class SyncIn(BaseModel):
     changes: list[dict] = []
 
 
+def keep_awake(svc: Service, every: float = 30.0) -> None:
+    """While preparation work is pending, request our own public URL so a host that stops idle
+    machines (Fly auto-stop) never stops one mid-render: an interrupted render is paid twice."""
+    import urllib.request
+
+    while True:
+        time.sleep(every)
+        try:
+            if svc.db.one("SELECT COUNT(*) AS n FROM jobs WHERE state IN ('waiting', 'preparing')")["n"]:
+                urllib.request.urlopen(svc.cfg.keepalive_url, timeout=10).read()
+        except Exception as err:
+            print("keepalive:", repr(err), flush=True)
+
+
 def create_app(cfg: Config | None = None, run_worker: bool = True) -> FastAPI:
     svc = Service(cfg or Config())
     app = FastAPI(title="Closr garment preparation", version="0.1")
@@ -196,4 +210,6 @@ def create_app(cfg: Config | None = None, run_worker: bool = True) -> FastAPI:
                     time.sleep(2.0)
 
         threading.Thread(target=loop, name="prep-worker", daemon=True).start()
+        if svc.cfg.keepalive_url:
+            threading.Thread(target=keep_awake, args=(svc,), name="keepalive", daemon=True).start()
     return app

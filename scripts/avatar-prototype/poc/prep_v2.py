@@ -204,8 +204,10 @@ def hue_guard(layer: Image.Image, photo: Image.Image, session) -> Image.Image:
     from rembg import remove
     from wardrobe_poc import garment_mask
 
-    small = photo.copy()
-    small.thumbnail((800, 800))
+    small = photo.convert("RGB").copy()
+    # Same working size as color_lock: the segmentation model then reuses one memory pool
+    # instead of allocating another (~600 MB) for a second input shape.
+    small.thumbnail((900, 900))
     cut = remove(small, session=session)
     m = garment_mask(np.array(cut.getchannel("A")))
     hsv_photo = np.array(cut.convert("RGB").convert("HSV")).astype(np.float32)

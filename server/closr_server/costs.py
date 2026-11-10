@@ -55,6 +55,8 @@ class CostGuard:
         lim = self.cfg.limits
         t = now()
         with self.db.tx():
+            if lim.global_total_usd and self._spent(0) + worst > lim.global_total_usd:
+                raise SpendLimit("total budget reached")
             if self._spent(_day_start(t)) + worst > lim.global_daily_usd:
                 raise SpendLimit("global daily budget reached")
             if user_id and self._spent(_day_start(t), user_id) + worst > lim.user_daily_usd:

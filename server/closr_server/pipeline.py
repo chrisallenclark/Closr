@@ -39,6 +39,17 @@ class Unusable(Exception):
     """This attempt produced an inaccurate asset; retryable within the job's attempt limit."""
 
 
+def _lean_session_options():
+    """Segmentation model settings for a small server: without the CPU memory arena, memory is
+    returned after each run instead of growing by ~500 MB per call (same results, slightly slower)."""
+    import onnxruntime as ort
+
+    opts = ort.SessionOptions()
+    opts.enable_cpu_mem_arena = False
+    opts.enable_mem_pattern = False
+    return opts
+
+
 @dataclass
 class Mannequin:
     canonical: Image.Image
@@ -59,7 +70,7 @@ class Mannequin:
             ref_trousers=Image.open(folder / "ref-trousers.png").convert("RGB"),
             plate=Image.open(folder / "plate.png").convert("RGB"),
             landmarks=json.loads((folder / "landmarks.json").read_text()),
-            session=new_session("isnet-general-use"),
+            session=new_session("isnet-general-use", sess_opts=_lean_session_options()),
         )
 
 

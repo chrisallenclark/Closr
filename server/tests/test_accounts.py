@@ -138,3 +138,18 @@ def test_bucket_urls_are_presigned_and_expire(tmp_path, backend):
     key = svc.add_photo(uid, "tee", "garment", photo())["storageKey"]
     url = svc.sign(key)
     assert url.startswith("https://") and "X-Amz-Expires=604800" in url and "X-Amz-Signature=" in url
+
+
+def test_postgres_reconnects_after_the_server_drops_the_connection(tmp_path, backend):
+    if not backend.get("database_url"):
+        pytest.skip("runs with CLOSR_TEST_DATABASE_URL")
+    import psycopg
+
+    svc = make(tmp_path, backend)
+    uid = svc.create_session()["userId"]
+    with psycopg.connect(backend["database_url"], autocommit=True) as admin:  # e.g. Neon suspending when idle
+        admin.execute("SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = current_database() AND pid <> pg_backend_pid()")
+    assert svc.account(uid)["userId"] == uid  # plain query: reconnects
+    with psycopg.connect(backend["database_url"], autocommit=True) as admin:
+        admin.execute("SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = current_database() AND pid <> pg_backend_pid()")
+    svc.guard.reserve(uid, None, "render", "replay")  # transaction: reconnects before BEGIN

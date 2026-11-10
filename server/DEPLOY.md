@@ -6,7 +6,38 @@ S3-compatible bucket. `fly.toml` sets this up on Fly.io, which provides all thre
 Managed Postgres, and Tigris storage). The image runs anywhere else just as well: set the
 environment variables below.
 
-## 1. Backend on Fly.io (about 20 minutes)
+## 0. Private beta (lowest cost): `fly.beta.toml`
+
+Costs and tradeoffs are in `docs/beta-hosting.md`. Every secret is entered by you, in your own
+terminal or the provider's dashboard. None of them goes into chat, the repo or the app.
+
+1. **Neon** (neon.com, Free plan): create a project in **AWS us-east-1**. Copy its connection
+   string; it includes `sslmode=require`.
+2. **Fly.io**: create an account and add a card. Then, from a clone of this branch:
+   ```bash
+   brew install flyctl && fly auth login
+   fly launch --no-deploy -c fly.beta.toml --copy-config   # rename the app if "closr-api" is taken
+   fly storage create                                      # private Tigris bucket; sets AWS_* secrets, prints BUCKET_NAME
+   fly secrets set -c fly.beta.toml \
+       DATABASE_URL='<Neon connection string>' \
+       CLOSR_S3_BUCKET='<BUCKET_NAME>' \
+       CLOSR_SIGNING_SECRET="$(openssl rand -hex 32)" \
+       GEMINI_API_KEY='<your key>'
+   fly deploy -c fly.beta.toml
+   fly scale count 1 -c fly.beta.toml
+   fly ips list -c fly.beta.toml             # want a shared IPv4 + IPv6 only (no $2/month dedicated IPv4)
+   curl https://closr-api.fly.dev/healthz    # {"ok":true}
+   ```
+3. **Mannequin**: download the five files listed in the private backup page's "Mannequin kit"
+   into a folder `closr-backup`, then copy them to the machine and install:
+   ```bash
+   fly ssh console -c fly.beta.toml -C "mkdir -p /tmp/closr-backup"
+   fly ssh sftp shell -c fly.beta.toml        # put each file into /tmp/closr-backup/
+   fly ssh console -c fly.beta.toml -C "python -m closr_server.admin restore-backup --mannequin-only --from /tmp/closr-backup"
+   ```
+4. **TestFlight**: section 3 below.
+
+## 1. Scaled backend on Fly.io (`fly.toml`, later)
 
 ```bash
 brew install flyctl && fly auth login

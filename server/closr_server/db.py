@@ -206,11 +206,10 @@ class PgDB(DB):
     dialect = "postgres"
 
     def __init__(self, url: str):
-        import psycopg
-        from psycopg.rows import dict_row
-
-        self.conn = psycopg.connect(url, autocommit=True, row_factory=dict_row)
+        self.url = url
         self.lock = threading.RLock()
+        self.in_tx = False
+        self._connect()
         with self.lock:
             self.conn.execute("SELECT pg_advisory_lock(7101)")  # one process migrates at a time
             try:
@@ -220,15 +219,56 @@ class PgDB(DB):
             finally:
                 self.conn.execute("SELECT pg_advisory_unlock(7101)")
 
+    def _connect(self):
+        import psycopg
+        from psycopg.rows import dict_row
+
+        self.conn = psycopg.connect(self.url, autocommit=True, row_factory=dict_row)
+
     def _sql(self, sql: str) -> str:
         return sql.replace("?", "%s")
 
+    def _retry(self, fn):
+        """Hosted Postgres closes connections (idle suspend, restarts, failover): reconnect once and
+        retry a single statement. Inside a transaction the error propagates and it rolls back."""
+        import psycopg
+
+        try:
+            return fn()
+        except psycopg.OperationalError:
+            if self.in_tx:
+                raise
+            self._connect()
+            return fn()
+
+    def one(self, sql: str, *args):
+        with self.lock:
+            return self._retry(lambda: self.conn.execute(self._sql(sql), args).fetchone())
+
+    def all(self, sql: str, *args) -> list:
+        with self.lock:
+            return self._retry(lambda: self.conn.execute(self._sql(sql), args).fetchall())
+
+    def run(self, sql: str, *args):
+        with self.lock:
+            return self._retry(lambda: self.conn.execute(self._sql(sql), args))
+
     def _begin(self):
-        self.conn.execute("BEGIN")
+        if self.conn.closed or self.conn.broken:
+            self._connect()
+        try:
+            self.conn.execute("BEGIN")
+        except Exception:
+            self._connect()
+            self.conn.execute("BEGIN")
+        self.in_tx = True
         # Same guarantee as SQLite's IMMEDIATE: spending checks and credit changes never interleave.
         self.conn.execute("SELECT pg_advisory_xact_lock(7102)")
 
     def _end(self, ok: bool):
+        self.in_tx = False
+        if self.conn.broken:
+            return  # the server already dropped the transaction
         self.conn.execute("COMMIT" if ok else "ROLLBACK")
 
 
