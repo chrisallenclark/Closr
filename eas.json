@@ -19,6 +19,7 @@
     },
     "testflight": {
       "extends": "production",
+      "distribution": "store",
       "env": {
         "EXPO_PUBLIC_CLOSR_API_URL": "https://closr-api.fly.dev",
         "EXPO_PUBLIC_CLOSR_DIAGNOSTICS": "1"

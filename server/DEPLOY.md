@@ -24,8 +24,8 @@ provider's dashboard. None of them goes into chat, the repo, your shell history 
    brew install flyctl
    git clone -b claude/loving-feynman-e27jo0 https://github.com/chrisallenclark/Closr.git && cd Closr
    fly auth login
-   fly launch --no-deploy --copy-config --name closr-api   # "No" to databases or Redis if asked
-   fly storage create --name closr-images                   # private Tigris bucket; adds its keys to the app itself
+   fly apps create closr-api                                # the app only: no database, Redis, bucket or machines
+   fly storage create --name closr-images -a closr-api      # private Tigris bucket; adds its keys to the app itself
    openssl rand -hex 24 | pbcopy                            # an operator token, now on your clipboard
    ```
    If `closr-api` is taken, pick another name and tell Claude (the app's server address uses it).
@@ -35,7 +35,7 @@ provider's dashboard. None of them goes into chat, the repo, your shell history 
    - `GEMINI_API_KEY`: your Gemini key.
 4. Claude then asks for the operator token through a secure form (not chat). Paste the same value.
    It's used only to install the mannequin and read the spend report.
-5. Back in Terminal: `fly deploy` (about 5 minutes the first time), then `fly scale count 1`.
+5. Back in Terminal: `fly deploy --ha=false` (exactly one machine; about 5 minutes the first time), then `fly machines list` should show one machine.
 
 Claude then installs the mannequin through the operator token and verifies the hosted API.
 
