@@ -37,6 +37,14 @@ Keep this short and current, so later sessions don't redo finished work. Never p
   fly.storage.tigris.dev) works: the code uses whatever is set.
 - Not needed: `CLOSR_SIGNING_SECRET` (bucket storage uses its own presigned URLs).
 
+## 2026-11-12: Tigris bucket created; credentials exposed (deployment paused)
+- `fly storage create` made bucket `closr-images` and **deployed** all 8 secrets immediately (it
+  ignores staging), which updated both AMS 256 MB machines.
+- The Tigris access key pair was pasted into a chat transcript: treat it as compromised. Rotate it
+  (new key in the Tigris console, revoke the old key, stage the new pair) before any deploy.
+- The AMS machines can now auto-start with real secrets but only 256 MB: replace them, don't use them.
+  No users exist yet (Apple sign-in only), so no jobs or AI calls can start; the $1.80 cap applies anyway.
+
 ## Next (each needs the owner's approval)
 1. Read-only check of the live app: machines, IPs, checks, logs, secret names.
 2. Destroy the two AMS trial machines (they hold no data: no database or bucket was attached).
