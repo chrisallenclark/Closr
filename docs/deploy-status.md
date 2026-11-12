@@ -28,6 +28,15 @@ Keep this short and current, so later sessions don't redo finished work. Never p
 - No GitHub Actions workflows in the repo: any automatic deploy would come from Fly's GitHub link.
 - Owner is on Windows: use the Fly dashboard or PowerShell flyctl.
 
+## Secrets (names verified against server/closr_server/config.py)
+- Set by the owner (staged with `fly secrets import --stage`, so nothing restarts):
+  `DATABASE_URL` (Neon **direct** connection string, pooling OFF: the server takes a session-level
+  advisory lock during migrations, which a transaction pooler breaks), `GEMINI_API_KEY`, `CLOSR_ADMIN_TOKEN`.
+- Set automatically by `fly storage create`: `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`,
+  `AWS_ENDPOINT_URL_S3`, `AWS_REGION`, `BUCKET_NAME`. Either Tigris endpoint (t3.storage.dev or
+  fly.storage.tigris.dev) works: the code uses whatever is set.
+- Not needed: `CLOSR_SIGNING_SECRET` (bucket storage uses its own presigned URLs).
+
 ## Next (each needs the owner's approval)
 1. Read-only check of the live app: machines, IPs, checks, logs, secret names.
 2. Destroy the two AMS trial machines (they hold no data: no database or bucket was attached).
