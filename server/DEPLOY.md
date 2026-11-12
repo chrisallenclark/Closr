@@ -24,12 +24,12 @@ provider's dashboard. None of them goes into chat, the repo, your shell history 
    brew install flyctl
    git clone -b claude/loving-feynman-e27jo0 https://github.com/chrisallenclark/Closr.git && cd Closr
    fly auth login
-   fly apps create closr-api                                # the app only: no database, Redis, bucket or machines
-   fly storage create --name closr-images -a closr-api      # private Tigris bucket; adds its keys to the app itself
+   fly apps create closr                                # the app only: no database, Redis, bucket or machines
+   fly storage create --name closr-images -a closr      # private Tigris bucket; adds its keys to the app itself
    openssl rand -hex 24 | pbcopy                            # an operator token, now on your clipboard
    ```
-   If `closr-api` is taken, pick another name and tell Claude (the app's server address uses it).
-3. Open https://fly.io/dashboard → **closr-api** → **Secrets** and add three secrets:
+   If `closr` is taken, pick another name and tell Claude (the app's server address uses it).
+3. Open https://fly.io/dashboard → **closr** → **Secrets** and add three secrets:
    - `CLOSR_ADMIN_TOKEN`: paste from the clipboard (step 2). Keep it there for the next step.
    - `DATABASE_URL`: the Neon connection string (step A2).
    - `GEMINI_API_KEY`: your Gemini key.
@@ -54,7 +54,7 @@ When it finishes, the build shows up in TestFlight on your iPhone after Apple's 
 
 ```bash
 brew install flyctl && fly auth login
-fly launch --no-deploy -c fly.scaled.toml --copy-config  # keeps the config; rename the app if "closr-api" is taken
+fly launch --no-deploy -c fly.scaled.toml --copy-config  # keeps the config; rename the app if "closr" is taken
 fly mpg create                                # Managed Postgres; then attach it, which sets DATABASE_URL
 fly storage create                            # private Tigris bucket; sets AWS_* secrets and BUCKET_NAME
 fly secrets set CLOSR_S3_BUCKET=<BUCKET_NAME from the previous step> \
@@ -62,10 +62,10 @@ fly secrets set CLOSR_S3_BUCKET=<BUCKET_NAME from the previous step> \
                 GEMINI_API_KEY=<your key>     # stays on the server, never in the app
 fly deploy
 fly scale count app=1 worker=1
-curl https://closr-api.fly.dev/healthz        # {"ok": true}
+curl https://closr.fly.dev/healthz        # {"ok": true}
 ```
 
-If the app name differs from `closr-api`, change `EXPO_PUBLIC_CLOSR_API_URL` in `eas.json` (the
+If the app name differs from `closr`, change `EXPO_PUBLIC_CLOSR_API_URL` in `eas.json` (the
 `testflight` profile) to match.
 
 **Install the mannequin into the bucket** (once, from a computer with the private backup):

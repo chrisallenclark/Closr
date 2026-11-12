@@ -1,6 +1,6 @@
 # Closr scaled configuration on Fly.io, for after the beta (see server/DEPLOY.md):  fly deploy -c fly.scaled.toml
 # Two process groups from one image: the HTTPS API, and the preparation worker.
-app = "closr-api"
+app = "closr"
 primary_region = "iad"
 
 [build]

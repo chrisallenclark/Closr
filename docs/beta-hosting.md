@@ -71,7 +71,7 @@ bound it per user (beta: 10 credits, $1.50/day, $1.80/month) and in total (beta:
 - **No volumes and no Fly Postgres** in this configuration: `fly volumes list` should be empty.
 - **Neon Free and Tigris's free tier** never bill unless you upgrade.
 - **Pausing the beta:** `fly scale count 0` leaves only the rootfs charge (≈ $0.30/month).
-- **Ending the beta:** `fly apps destroy closr-api`, delete the Tigris bucket, and delete the Neon project.
+- **Ending the beta:** `fly apps destroy closr`, delete the Tigris bucket, and delete the Neon project.
 - **Watch Gemini spend:** `fly ssh console -C "python -m closr_server.admin spend"`. Fly has no hard spending cap; check the Fly billing page.
 
 ## Tradeoffs of the cheaper beta configuration

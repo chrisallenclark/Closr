@@ -3,11 +3,13 @@
 #   One machine runs the API and the preparation worker together, and stops when nobody is using
 #   Closr. It starts again on the next request (a few seconds). Postgres is external (Neon free
 #   plan) and images live in a private Tigris bucket, so the machine keeps no data of its own.
-# Deploy with:  fly deploy
+# Deploy with:  fly deploy --ha=false   (one machine; never pass memory_mb, the [[vm]] size below is the size)
 # Secrets (set by you, never in this file): DATABASE_URL (Neon), GEMINI_API_KEY, CLOSR_ADMIN_TOKEN;
 # `fly storage create` adds the bucket's AWS_* and BUCKET_NAME itself.
-app = "closr-api"
-primary_region = "iad"          # near Neon's us-east-1 region
+app = "closr"
+primary_region = "iad"          # US East, next to Neon's us-east-1 database
+# Top-level settings must come before the first [table] (TOML would put them inside it).
+kill_timeout = 30               # let a request finish on deploys; interrupted jobs resume at startup
 
 [build]
   dockerfile = "server/Dockerfile"
@@ -26,8 +28,6 @@ primary_region = "iad"          # near Neon's us-east-1 region
   CLOSR_STARTING_CREDITS = "10"
   CLOSR_JOBS_PER_HOUR = "10"
   CLOSR_MAX_ATTEMPTS = "2"
-
-kill_timeout = 30                 # let a request finish on deploys; interrupted jobs resume at startup
 
 [http_service]
   internal_port = 8080
