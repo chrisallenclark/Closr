@@ -18,6 +18,16 @@ Keep this short and current, so later sessions don't redo finished work. Never p
   (our bug, fixed in `fly.toml`). It deployed two 256 MB machines in AMS, with no secrets.
 - `GET /` returns 404 by design (the API has no root route); the health check is `/healthz`.
 
+## Verified on 2026-11-12 (no live changes)
+- Memory: the deployment image under a hard 2 GB limit, 3 garments prepared plus 6 concurrent
+  full-size uploads: peak 1,224 MiB, no OOM (1.5 GB would leave ~300 MiB; 1 GB can't run it).
+- Auto-stop safety: server stopped mid-job with SIGINT (as Fly does) and restarted: the job resumed at
+  once, finished as 1 job / 1 layer / 1 credit; the app's resubmission returned the same job.
+  Worst case: one interrupted real render paid twice, bounded by the attempt limit (2) and the $1.80 cap.
+- Health check: `/healthz` (200); `/` returns 404 by design.
+- No GitHub Actions workflows in the repo: any automatic deploy would come from Fly's GitHub link.
+- Owner is on Windows: use the Fly dashboard or PowerShell flyctl.
+
 ## Next (each needs the owner's approval)
 1. Read-only check of the live app: machines, IPs, checks, logs, secret names.
 2. Destroy the two AMS trial machines (they hold no data: no database or bucket was attached).
