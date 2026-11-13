@@ -45,6 +45,10 @@ Keep this short and current, so later sessions don't redo finished work. Never p
 - The AMS machines can now auto-start with real secrets but only 256 MB: replace them, don't use them.
   No users exist yet (Apple sign-in only), so no jobs or AI calls can start; the $1.80 cap applies anyway.
 
+## 2026-11-13: ready to deploy
+- Tigris key rotated by the owner (new key `aulorvy-closr-production`, old key revoked); the new pair is
+  staged in Fly. AMS machines stopped. IPv4 is shared (free).
+
 ## Next (each needs the owner's approval)
 1. Read-only check of the live app: machines, IPs, checks, logs, secret names.
 2. Destroy the two AMS trial machines (they hold no data: no database or bucket was attached).
