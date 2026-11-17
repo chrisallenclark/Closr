@@ -49,6 +49,16 @@ Keep this short and current, so later sessions don't redo finished work. Never p
 - Tigris key rotated by the owner (new key `aulorvy-closr-production`, old key revoked); the new pair is
   staged in Fly. AMS machines stopped. IPv4 is shared (free).
 
+## 2026-11-17: backend live
+- One machine `8edd639b313498`, iad, shared-cpu-1x 2 GB; /healthz ok; anonymous sign-up refused;
+  auto-stop confirmed in logs (stopped ~7 min after the last request).
+- Storage moved to a bucket in the owner's own Tigris account (the Fly-provisioned `closr-images` sat in
+  a Tigris org the owner couldn't sign in to). Secrets reset with prompt-based PowerShell input;
+  endpoint https://t3.storage.dev, region auto. Mannequin `closr-v3` installed via the operator API.
+- Status: provider gemini, spend $0.00, all-time cap $1.80, 0 accounts.
+- Left to do: destroy the empty Fly-provisioned `closr-images` (its exposed key may still be active
+  there), then re-check `fly secrets list`; TestFlight build.
+
 ## Next (each needs the owner's approval)
 1. Read-only check of the live app: machines, IPs, checks, logs, secret names.
 2. Destroy the two AMS trial machines (they hold no data: no database or bucket was attached).
