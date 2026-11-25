@@ -1,3 +1,5 @@
+For Closr product context, owner rules, and never-do rules, read `CLAUDE.md` (and `docs/AULORVY_PROFILE.md`).
+
 This is an Expo/React Native mobile application. Prioritize mobile-first patterns, performance, and cross-platform compatibility.
 
 ## Expo has changed — do not trust your training data
